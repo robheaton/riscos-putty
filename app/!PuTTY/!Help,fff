@@ -46,6 +46,17 @@ session and New session.
 From the command line (for example from an Obey file) PuTTY takes the options of
 the other versions: putty -ssh -P 22 -l user -i keyfile host, or putty -load session.
 
+Random numbers
+--------------
+PuTTY needs good random numbers to make the keys of an SSH session.  RISC OS has no
+built-in source, so PuTTY uses the CryptRandom module.  It is normally already in your
+!System (try  *Info System:Modules.CryptRand  in a command window) and PuTTY loads it
+itself when it needs it.  If PuTTY warns that it cannot find it, install the CryptRandom
+package with !PackMan (System section; or see
+http://www.chiark.greenend.org.uk/~theom/riscos/crypto/ ) and start PuTTY again.
+Without the module PuTTY still works but its keys are weaker than they should be (set
+the system variable PuTTY$NoEntropyWarning to silence the box).
+
 Files
 -----
 Settings, saved sessions and the host keys PuTTY has accepted are kept in the

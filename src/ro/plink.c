@@ -481,9 +481,11 @@ int main(int argc, char **argv)
 
     if (ro_entropy_is_weak() && !getenv("PuTTY$NoEntropyWarning"))
         fprintf(stderr,
-                "plink: warning: the CryptRandom module is not loaded, so this\n"
-                "plink: system has no strong source of random numbers. Session\n"
-                "plink: keys will be weaker than they should be.\n");
+                "plink: warning: the CryptRandom module is not loaded and could not\n"
+                "plink: be found in System:Modules, so this system has no strong\n"
+                "plink: source of random numbers. Session keys will be weaker than\n"
+                "plink: they should be. Install the CryptRandom package with\n"
+                "plink: !PackMan (System section).\n");
 
     /*
      * Plink doesn't provide any way to add forwardings after the connection is

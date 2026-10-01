@@ -5,15 +5,22 @@
  * far as I could find) no operating-system entropy source at all, so what we
  * can offer depends on the machine:
  *
- *  - If the CryptRandom module is loaded, CryptRandom_Word gives us proper
- *    random numbers.  That is the good case.
+ *  - If the CryptRandom module is available (Theo Markettos's module, which UnixLib
+ *    also uses for /dev/random; version 0.09 or later; it is normally in !System.310.
+ *    Modules, from where we load it if it is not running), CryptRandom_Block gives us
+ *    random numbers gathered from things like mouse movements, key presses and
+ *    the timing of the HAL counter, and kept across restarts in a seed file.  That
+ *    is the good case.  (Not CryptRandom_Word: in 0.13 it returns one random byte
+ *    four times over, so a word holds 8 bits of randomness, not 32.)
  *
- *  - Otherwise we fall back on timing jitter (measured with the HAL's
- *    microsecond counter, and the time of every keypress and network event to
- *    the same accuracy) and system state.  This is WEAK: perhaps a hundred bits
- *    at best, and an attacker who knew roughly when a session started could
- *    search for them.  ro_entropy_is_weak() says which case we are in so that
- *    the front ends can tell the user instead of quietly shipping weak keys.
+ *  - Whether or not it is loaded we also gather timing jitter ourselves (measured
+ *    with the HAL's microsecond counter, and the time of every keypress and
+ *    network event to the same accuracy) and system state, so a weakness in one
+ *    source does not sink the other.  On its own this is WEAK: perhaps a hundred
+ *    bits at best, and an attacker who knew roughly when a session started could
+ *    search for them.  ro_entropy_is_weak() says whether the module is working,
+ *    so that the front ends can tell the user instead of quietly shipping weak
+ *    keys.
  *
  * PuTTY's own seed file (read_random_seed) is always mixed in as well; if it
  * was written by a machine with a good source, copying it across carries that
@@ -30,35 +37,69 @@
 #include "storage.h"
 #include "ro.h"
 
-#define CryptRandom_Word_SWI 0x051984
+/* The module's SWIs (the numbers are in UnixLib's swis.h). */
+#define CryptRandom_Stir_SWI   0x051981   /* no registers: mix in more noise */
+#define CryptRandom_Block_SWI  0x051983   /* R0 -> buffer, R1 = number of bytes */
 
 static bool have_cryptrandom;
 static bool probed;
 
-/* Fill buf with n bytes from the CryptRandom module; false if unavailable. */
-static bool cryptrandom_bytes(void *vbuf, size_t n)
+/* Fill buf with n bytes from the CryptRandom module; false if it is unavailable. */
+static bool cryptrandom_bytes(void *buf, size_t n)
 {
-    unsigned char *buf = vbuf;
-    while (n > 0) {
-        unsigned w = 0;
-        size_t i, take = n < 4 ? n : 4;
-        if (_swix(CryptRandom_Word_SWI, _OUT(0), &w))
-            return false;
-        for (i = 0; i < take; i++)
-            buf[i] = (unsigned char)(w >> (8 * i));
-        buf += take;
-        n -= take;
-    }
-    return true;
+    return !_swix(CryptRandom_Block_SWI, _INR(0, 1), buf, (int)n);
+}
+
+/*
+ * Is the module there, and is it really handing out random bytes?
+ *
+ * PackMan's CryptRandom package only puts the file in !System.310.Modules; nothing
+ * loads it at boot, so (as UnixLib does for /dev/random) we load it from
+ * System:Modules if it is not running yet.  RMEnsure also makes sure it is version
+ * 0.09 or later: before that Block could leave the end of a big request unfilled.
+ * Then the SWIs are tried, and what comes back is checked: bytes that are still as we
+ * left them, all zero or all one, or the same twice, are not entropy (an unexpected
+ * module), and then we say so and rely on our own sources.
+ */
+#define ENSURE_VERSION "RMEnsure CryptRandom 0.09 "
+
+/* True if the command ran without an error (an RMEnsure that has to give up is an error). */
+static bool cli_ok(const char *cmd)
+{
+    return !_swix(OS_CLI, _IN(0), cmd);
+}
+
+static bool module_ok(void)
+{
+    return cli_ok(ENSURE_VERSION "Error CryptRandom 0.09 or later is needed") &&
+           !_swix(CryptRandom_Stir_SWI, 0);
 }
 
 static void probe(void)
 {
-    unsigned char test[4];
+    unsigned char a[16], b[16];
+    size_t i;
+    bool all_zero = true, all_ones = true;
+
     if (probed)
         return;
     probed = true;
-    have_cryptrandom = cryptrandom_bytes(test, sizeof test);
+    if (!module_ok()) {
+        cli_ok(ENSURE_VERSION "RMLoad System:Modules.CryptRand");          /* errors do not matter */
+        if (!module_ok())
+            return;
+    }
+    memset(a, 0x00, sizeof a);
+    memset(b, 0xFF, sizeof b);
+    if (!cryptrandom_bytes(a, sizeof a) || !cryptrandom_bytes(b, sizeof b))
+        return;
+    for (i = 0; i < sizeof a; i++) {
+        if (a[i] != 0x00) all_zero = false;
+        if (b[i] != 0xFF) all_ones = false;
+    }
+    if (all_zero || all_ones || !memcmp(a, b, sizeof a))
+        return;
+    have_cryptrandom = true;
 }
 
 bool ro_entropy_is_weak(void)
@@ -152,8 +193,7 @@ void noise_get_heavy(void (*func) (void *, int))
         func(buf, sizeof buf);
 
     snapshot(func);
-    if (!have_cryptrandom)
-        jitter(func, 160);             /* about a tenth of a second */
+    jitter(func, 160);                 /* about a tenth of a second; always, as well as the module */
 
     /* (No random_save_seed() here: the PRNG is still being built when we are
      * called.  cleanup_exit() saves the seed when the program ends.) */

@@ -5,6 +5,6 @@
 #ifndef PUTTY_ROVERSION_H
 #define PUTTY_ROVERSION_H
 
-#define RO_PORT_VERSION "0.01"
+#define RO_PORT_VERSION "0.03"
 
 #endif /* PUTTY_ROVERSION_H */

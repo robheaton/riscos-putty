@@ -23,21 +23,24 @@
 
 extern const struct BackendVtable *select_backend(Conf *conf);   /* roapp.c */
 
-/* Without the CryptRand module the random numbers behind session keys are only as
- * good as timing jitter: say so in the event log, and once per run in a box. */
+/* Without the CryptRandom module (see noise.c: it is loaded from System:Modules if it is
+ * installed) the random numbers behind session keys are only as good as timing jitter:
+ * say so in the event log, and once per run in a box. */
 static void warn_if_weak_entropy(RoTerm *t)
 {
     static bool warned;
     if (!ro_entropy_is_weak())
         return;
-    logevent(t->logctx, "Warning: no CryptRand module, so random numbers come only from timing "
-             "jitter and the seed file (weaker than they should be)");
+    logevent(t->logctx, "Warning: the CryptRandom module is not loaded and could not be found, so random "
+             "numbers come only from timing jitter and the seed file (weaker than they should be)");
     if (!warned && !getenv("PuTTY$NoEntropyWarning")) {
         warned = true;
         ro_notice(NULL, "PuTTY",
-                  "The CryptRand module is not loaded, so this computer has no strong source of "
-                  "random numbers for PuTTY. The keys of your sessions will be weaker than they "
-                  "should be. Install CryptRand (for example with PackMan) for better security.\n"
+                  "The CryptRandom module is not loaded and PuTTY could not find it in System:Modules, "
+                  "so this computer has no strong source of random numbers for PuTTY and the keys of "
+                  "your sessions will be weaker than they should be.\n"
+                  "Install the CryptRandom package with !PackMan (it is in the System section) and "
+                  "start PuTTY again.\n"
                   "Set the system variable PuTTY$NoEntropyWarning to stop this message.");
     }
 }

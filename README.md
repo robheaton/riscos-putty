@@ -32,6 +32,12 @@ session` work from the command line.
 
 Settings and host keys live in the PuTTY directory of `<Choices$Write>`.
 
+Random numbers: good session keys need the **CryptRandom** module. It is normally already in your `!System`
+(`*Info System:Modules.CryptRand` will tell you) and PuTTY loads it itself; if it is missing, install the
+CryptRandom package with !PackMan (System section; or see
+<http://www.chiark.greenend.org.uk/~theom/riscos/crypto/>). Without it PuTTY warns, once a run, that its random
+numbers come only from timing jitter.
+
 Not done yet: psftp/pscp/puttygen.
 
 ## Building
@@ -84,7 +90,7 @@ so a stuck test gives up, and `PuTTY$Trace` (a filename) to log socket events.
   (dialogue, menu and Wimp helpers).
 - `app/!PuTTY/` - the application directory's static files.
 - `tests/ro/` - diagnostics run in the emulator: the Resolver SWIs (`dnstest`), the Font Manager, the HAL
-  counter, and half-closed connections on the loopback (`halfclose`).
+  counter, half-closed connections on the loopback (`halfclose`), and the CryptRandom module (`crtest`).
 - `tools/echoserver.py`, `tools/conchserver.py`, `tools/testproxy.py` - test servers: a Telnet/Raw echo
   server, a second SSH implementation (Twisted Conch, with port forwarding), and an HTTP/SOCKS proxy.
 - `tools/cryptomatrix.py` - runs every cipher, MAC, key exchange, key type and compression mode

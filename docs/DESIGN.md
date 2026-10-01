@@ -35,16 +35,41 @@ numeric addresses (`GetHostByName` says "not found" for 10.10.10.2), which `sk_n
 In RPCEmu a name server that does not answer makes the Resolver give up after a second or two and answer
 127.0.0.1, so a mistyped name can end as "Connection refused" rather than "not found".
 
-## Entropy (`noise.c`) - OPEN, security-relevant
+## Entropy (`noise.c`) - security-relevant
 
-Upstream reads `/dev/urandom`. RISC OS has no equivalent. `noise.c` uses the
-CryptRandom module's `CryptRandom_Word` if it is loaded; otherwise it gathers timing
-jitter and system state and mixes in the seed file, and `plink` warns that the result is
-weak. The SWI is called through `CryptRandom_Word` only because it takes no pointer;
-`CryptRandom_Block`/`_Byte` must not be used until their register interface is
-confirmed. The RISC OS 5.31 BCM2835 kernel sources contain no entropy API. Options:
-require CryptRand, read the Pi's hardware RNG registers, or ask the user to supply a
-seed file made on a machine with a good source (PuTTY mixes `RandomSeed` in).
+Upstream reads `/dev/urandom`. RISC OS has no equivalent, and the 5.31 BCM2835 kernel sources contain no
+entropy API. The usual answer is the **CryptRandom** module (Theo Markettos; 0.13 of 2012 is ARMv7 and RISC OS 5
+compatible; it is what UnixLib's `/dev/random` uses): it gathers noise from mouse movements, key presses and
+the HAL timer, mixes it with a seed file kept in `Choices:Crypto`, and says in its own documentation that it is
+much less secure than a true random source but unpredictable and different on every start.
+
+**Where it is.** The standard RISC OS 5 `!Boot` already carries it as `!Boot.Resources.!System.310.Modules.CryptRand`
+(the emulator's, from 2016, is "0.13 (01 Jun 2012)"), but nothing loads it at boot: programs are expected to
+`RMEnsure` it. If it is not on a machine, !PackMan has it (package "CryptRandom", System section, 9,866 bytes,
+https://www.riscos.info/packages/arm/System/CryptRandom_0.13-1.zip; that package's module is "0.13 (16 Jul
+2012)", file `System/310/Modules/CryptRand`, MIT-style licence); author's page
+http://www.chiark.greenend.org.uk/~theom/riscos/crypto/ . It must be 0.09 or later: before that
+`CryptRandom_Block` had a hole (a request bigger than the pool came back partly unfilled).
+
+**What `noise.c` does.** `probe()` runs `RMEnsure CryptRandom 0.09 Error ...` (through `OS_CLI`, so success and
+failure are unambiguous), and if that fails tries `RMEnsure CryptRandom 0.09 RMLoad System:Modules.CryptRand`
+(UnixLib does the same) and checks again; then `CryptRandom_Stir` (no registers) must work. It then reads two
+16-byte blocks with `CryptRandom_Block` (R0 -> buffer, R1 = length) and refuses a module whose blocks are all
+zero, all ones or equal, treating it as absent. In use it asks for 64 bytes at start-up and 16 on every noise
+timer tick. **Whether or not the module is there** we also mix in our own timing jitter (HAL counter, about a tenth
+of a second at start-up), the time of every key and network event to the same accuracy, system state, and PuTTY's
+own seed file. Without the module that is WEAK (perhaps a hundred bits, and an attacker who knew roughly when a
+session started could search for them), so `ro_entropy_is_weak()` says so and both front ends warn (a box, once a
+run, in the GUI; always in the event log; set `PuTTY$NoEntropyWarning` to silence the box). Not done: reading the
+Pi's hardware RNG registers (the base address differs between models and user mode cannot reach it).
+
+**Tested** (`tests/ro/crtest.c`, RISC OS 5.30 in RPCEmu, both the stock module and the PackMan one): the SWI
+numbers are Byte 0x51980, Stir 0x51981, AddNoise 0x51982, Block 0x51983, Word 0x51984 (from the module's own SWI
+table, as in UnixLib's `swis.h`); `Block` fills 1 to 20000 bytes completely with nothing written past the end, and
+8192 bytes look random (32692 of 65536 bits set, chi-square 262 over the byte values, no repeated blocks); `Byte`
+is fine; **`Word` is broken in 0.13: every word is one random byte repeated four times** (100 of 100), so noise.c
+must not use it (build 0.01 did, and would have had a quarter of the entropy it thought). With the module absent,
+loaded, or installed but not loaded (auto-loaded), plink and the GUI behave as described.
 
 ## Console tool (`plink.c`)
 
