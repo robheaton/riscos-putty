@@ -1,0 +1,35 @@
+PuTTY 0.85 (released 2026-08-16) - pristine upstream files.
+
+Downloaded 2026-09-30 from https://the.earth.li/~sgtatham/putty/latest/ (the host
+that https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html links to):
+
+  putty-0.85.tar.gz       3023114 bytes
+  putty-0.85.tar.gz.gpg   438 bytes (detached signature)
+  sha256sums              16416 bytes
+
+Verification - run ./verify.sh to repeat it (exit status 0 means all of this holds):
+
+  * SHA-256 of putty-0.85.tar.gz is
+      13fd4db2936d03b73812a7bcc2a658e4dd29cc776a56c3670a7fc6f1a0ee8af8
+    which matches the published sha256sums.
+  * The tarball's signature is a good one by "PuTTY Releases
+    <putty@projects.tartarus.org>", the Release Key (2026), fingerprint
+      1A07 DAC0 F220 CF12 248E A719 5C67 D0F8 8BC3 E5B5
+  * That key is certified by the PuTTY Master Key (2026), fingerprint
+      371C 662B 855F 318F F63A D091 D732 471F 094D 5FB5
+  * Both fingerprints are the ones printed on
+    https://www.chiark.greenend.org.uk/~sgtatham/putty/keys.html, and the master
+    one is also compiled into the source (PGP_MASTER_KEY_FP in putty.h).
+
+What this does not prove: the master key's fingerprint was cross-checked between
+the official site and this tarball's own source, but not against an independent,
+previously trusted copy of PuTTY.
+
+keys/ holds the two public keys, fetched on 2026-10-01 from
+https://www.chiark.greenend.org.uk/~sgtatham/putty/keys/ .  Nothing is fetched
+from putty.org: it is NOT the PuTTY project's website (see FAQ A.9.1 in the
+PuTTY documentation).  verify.sh imports the keys into a throw-away keyring, so
+no one's real GnuPG setup is touched.
+
+putty-0.85/ is the unpacked tree (`tar xzf putty-0.85.tar.gz` in this
+directory).  It is not tracked by git; the tarball is the source of truth.

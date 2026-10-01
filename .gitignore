@@ -1,0 +1,3 @@
+build/
+# unpacked from upstream/putty-0.85.tar.gz; reproducible, so not tracked
+upstream/putty-*/
