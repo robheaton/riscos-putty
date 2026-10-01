@@ -8,11 +8,12 @@
  *  - If the CryptRandom module is loaded, CryptRandom_Word gives us proper
  *    random numbers.  That is the good case.
  *
- *  - Otherwise we fall back on timing jitter and system state.  This is WEAK:
- *    a few dozen bits at best, and an attacker who knew roughly when a session
- *    started could search for them.  ro_entropy_is_weak() says which case we
- *    are in so that the front ends can tell the user instead of quietly
- *    shipping weak keys.
+ *  - Otherwise we fall back on timing jitter (measured with the HAL's
+ *    microsecond counter, and the time of every keypress and network event to
+ *    the same accuracy) and system state.  This is WEAK: perhaps a hundred bits
+ *    at best, and an attacker who knew roughly when a session started could
+ *    search for them.  ro_entropy_is_weak() says which case we are in so that
+ *    the front ends can tell the user instead of quietly shipping weak keys.
  *
  * PuTTY's own seed file (read_random_seed) is always mixed in as well; if it
  * was written by a machine with a good source, copying it across carries that
@@ -66,6 +67,21 @@ bool ro_entropy_is_weak(void)
     return !have_cryptrandom;
 }
 
+/*
+ * The HAL's free-running counter (OS_Hardware 0, HAL routine 21) counts down
+ * through each centisecond tick at the rate of the machine's timer (1 or 2 MHz),
+ * so it times events far more finely than OS_ReadMonotonicTime.  Returns 0 if the
+ * call is not available.
+ */
+static uint32_t hal_counter(void)
+{
+    static bool unavailable;
+    unsigned v = 0;
+    if (!unavailable && _swix(OS_Hardware, _IN(8) | _IN(9) | _OUT(0), 0, 21, &v))
+        unavailable = true;
+    return v;
+}
+
 /* A grab-bag of changeable system state. */
 static void snapshot(void (*func)(void *, int))
 {
@@ -75,7 +91,9 @@ static void snapshot(void (*func)(void *, int))
         clock_t c;
         int mouse[4];
         unsigned long ticks;
+        uint32_t hires[6];
     } snap;
+    int i;
 
     memset(&snap, 0, sizeof snap);
     snap.cs = ro_time();
@@ -84,25 +102,40 @@ static void snapshot(void (*func)(void *, int))
     _swix(OS_Mouse, _OUTR(0, 3), &snap.mouse[0], &snap.mouse[1],
           &snap.mouse[2], &snap.mouse[3]);
     snap.ticks = getticks();
+    for (i = 0; i < 6; i++)
+        snap.hires[i] = hal_counter();
     func(&snap, sizeof snap);
 }
 
 /*
- * Count how many times round a loop we get in one centisecond tick.  The count
- * wobbles with cache state, interrupts and background activity, which is a
- * small amount of real unpredictability.
+ * Time some memory-bound work with the HAL counter.  How long it takes wobbles
+ * with cache state, interrupts, the bus and whatever else the machine is doing,
+ * which is a small amount of real unpredictability - perhaps a bit or two a sample,
+ * and none at all if the counter is missing.
  */
 static void jitter(void (*func)(void *, int), int samples)
 {
-    int i;
+    static volatile unsigned char scratch[8192];
+    uint32_t acc = ro_time();
+    int i, j;
+
     for (i = 0; i < samples; i++) {
         volatile unsigned long count = 0;
-        uint32_t t0 = ro_time(), t1;
-        while ((t1 = ro_time()) == t0)
-            ;
-        t0 = t1;
-        while (ro_time() == t0)
-            count++;
+        uint32_t a, b, d;
+        uint32_t t0 = ro_time();
+
+        if (i % 16 == 0)               /* now and then, wait out a tick too */
+            while (ro_time() == t0)
+                count++;
+        a = hal_counter();
+        for (j = 0; j < 400; j++) {
+            acc = acc * 1664525u + 1013904223u;
+            count += scratch[(acc >> 12) & 8191];
+            scratch[(acc >> 5) & 8191] = (unsigned char)acc;
+        }
+        b = hal_counter();
+        d = a - b;
+        func(&d, sizeof d);
         func((void *)&count, sizeof count);
     }
 }
@@ -120,7 +153,7 @@ void noise_get_heavy(void (*func) (void *, int))
 
     snapshot(func);
     if (!have_cryptrandom)
-        jitter(func, 24);              /* about a quarter of a second */
+        jitter(func, 160);             /* about a tenth of a second */
 
     /* (No random_save_seed() here: the PRNG is still being built when we are
      * called.  cleanup_exit() saves the seed when the program ends.) */
@@ -155,8 +188,10 @@ void noise_regular(void)
  */
 void noise_ultralight(NoiseSourceId id, unsigned long data)
 {
-    uint32_t cs = ro_time();
-    random_add_noise(NOISE_SOURCE_TIME, &cs, sizeof cs);
+    uint32_t t[2];
+    t[0] = ro_time();
+    t[1] = hal_counter();              /* where in the tick the event fell */
+    random_add_noise(NOISE_SOURCE_TIME, t, sizeof t);
     random_add_noise(id, &data, sizeof data);
 }
 

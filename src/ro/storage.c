@@ -45,10 +45,10 @@ static void make_session_filename(const char *in, strbuf *out)
         /*
          * Opt-in for safe characters rather than opt-out for unsafe ones: '.',
          * ':', '$', '&', '@', '^', '%', '\', '*', '#', '"' and '|' all mean
-         * something in a RISC OS pathname, and the rest of the punctuation is
-         * best avoided too.
+         * something in a RISC OS pathname, spaces are a nuisance on the command
+         * line, and the rest of the punctuation is best avoided too.
          */
-        if (c != '+' && c != '-' && c != '_' && c != ' ' &&
+        if (c != '+' && c != '-' && c != '_' &&
             !(c >= '0' && c <= '9') &&
             !(c >= 'A' && c <= 'Z') &&
             !(c >= 'a' && c <= 'z')) {

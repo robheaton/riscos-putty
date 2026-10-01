@@ -70,23 +70,30 @@ typedef struct {
  */
 static void trace(const char *fmt, ...)
 {
-    static FILE *fp;
-    static bool tried;
+    static char name[256];
+    static bool tried, started;
+    FILE *fp;
     va_list ap;
 
     if (!tried) {
-        const char *name = getenv("PuTTY$Trace");
+        const char *v = getenv("PuTTY$Trace");
         tried = true;
-        if (name && *name)
-            fp = fopen(name, "w");
+        if (v && *v)
+            snprintf(name, sizeof name, "%s", v);
     }
+    if (!name[0])
+        return;
+    /* reopened for each line: the file is complete on disk even while the program runs */
+    fp = fopen(name, started ? "a" : "w");
     if (!fp)
         return;
+    started = true;
+    fprintf(fp, "%u ", (unsigned)ro_time());
     va_start(ap, fmt);
     vfprintf(fp, fmt, ap);
     va_end(ap);
     fputc('\n', fp);
-    fflush(fp);
+    fclose(fp);
 }
 
 /*
@@ -284,9 +291,43 @@ static void resolving_list_remove(SockAddr *a)
 }
 
 /*
- * Ask the Resolver again about a name whose lookup is in progress.  The
- * multitasking form of Resolver_GetHost returns EINPROGRESS (either as an error
- * or in R0) until the answer is in.
+ * Which calling convention the "multitasking" lookup, Resolver_GetHost (0x46001),
+ * answers to.  The first call starts the lookup and returns R0 = EINPROGRESS (36);
+ * calling again with the same name returns R0 = 0 and a hostent, or -1 (not found)
+ * or -2 (the name server did not answer).  Where the name goes is not the same on
+ * every RISC OS: RISC OS 5.30 wants the pointer in R0 (with R0 = 0 it says "not
+ * found" for every name), the documentation for other versions says R1.  So try
+ * R0 and R1 both pointing at the name, then R1 alone, and if the SWI refuses both
+ * use the blocking Resolver_GetHostByName (which freezes the desktop until the
+ * answer arrives or the resolver gives up: Inet$ResolverDelay x Inet$ResolverRetries).
+ */
+enum { RES_BOTH, RES_R1, RES_BLOCKING };
+static int resolver_mode = RES_BOTH;
+
+static _kernel_oserror *resolver_lookup(const char *name, int *errnum, ro_hostent **he)
+{
+    _kernel_oserror *e;
+
+    *errnum = 0;
+    *he = NULL;
+    if (resolver_mode == RES_BOTH) {
+        e = _swix(Resolver_GetHost, _INR(0, 1) | _OUTR(0, 1), name, name, errnum, he);
+        if (!e) return NULL;
+        resolver_mode = RES_R1;
+    }
+    if (resolver_mode == RES_R1) {
+        e = _swix(Resolver_GetHost, _INR(0, 1) | _OUTR(0, 1), 0, name, errnum, he);
+        if (!e) return NULL;
+        resolver_mode = RES_BLOCKING;
+        *errnum = 0;
+        *he = NULL;
+    }
+    return _swix(Resolver_GetHostByName, _IN(1) | _OUTR(0, 1), name, errnum, he);
+}
+
+/*
+ * Ask the Resolver about a name: the first time starts the lookup, and each later
+ * call (from ro_net_poll) either finds it still in progress or gets the answer.
  */
 static void resolve_step(SockAddr *a)
 {
@@ -295,19 +336,7 @@ static void resolve_step(SockAddr *a)
     _kernel_oserror *e;
     int i, n;
 
-    /*
-     * This is the blocking lookup, as used by UnixLib's gethostbyname().  It
-     * is instant for a cached name and otherwise takes as long as the system's
-     * own resolver settings allow (Inet$ResolverDelay x Inet$ResolverRetries).
-     *
-     * The "multitasking" Resolver_GetHost (0x46001) would be better, but with
-     * R0 = 0 it answers R0 = -1 forever on RISC OS 5.30 under RPCEmu, and any
-     * other R0 gives "Bad parameters to Resolver SWI" (R0 = -1 faults), so its
-     * protocol is not understood yet.  See docs/DESIGN.md "Open points".
-     * The state machine around this function is ready for it.
-     */
-    e = _swix(Resolver_GetHostByName, _IN(1) | _OUTR(0, 1), a->hostname,
-              &errnum, &he);
+    e = resolver_lookup(a->hostname, &errnum, &he);
     if (e) {
         addr_fail(a, "Cannot look up host name: %s", e->errmess);
         goto done;
@@ -556,6 +585,7 @@ static Socket *sk_net_accept(accept_ctx_t ctx, Plug *plug)
         return &s->sock;
     }
 
+    trace("accept fd=%d", s->s);
     uxsel_tell(s);
     add234(sktree, s);
 
@@ -828,6 +858,7 @@ static void sk_net_close(Socket *sock)
 {
     NetSocket *s = container_of(sock, NetSocket, sock);
 
+    trace("close fd=%d", s->s);
     bufchain_clear(&s->output_data);
 
     del234(sktree, s);
@@ -897,6 +928,7 @@ static void try_send(NetSocket *s)
                   urgentflag, &nsent);
         if (!e)
             noise_ultralight(NOISE_SOURCE_IOLEN, nsent);
+        trace("send fd=%d len=%d -> %s nsent=%d", s->s, (int)len, e ? e->errmess : "ok", nsent);
         if (e || nsent <= 0) {
             int en = e ? ro_errno(e) : 0;
             if (e && (en == RO_EWOULDBLOCK || en == RO_EAGAIN ||
@@ -941,7 +973,8 @@ static void try_send(NetSocket *s)
     /* If we reach here, we've finished sending everything we might have
      * needed to send.  Send EOF, if we need to. */
     if (s->outgoingeof == EOF_PENDING) {
-        _swix(Socket_Shutdown, _INR(0, 1), s->s, 1);
+        _kernel_oserror *se = _swix(Socket_Shutdown, _INR(0, 1), s->s, 1);
+        trace("shutdown fd=%d -> %s", s->s, se ? se->errmess : "ok");
         s->outgoingeof = EOF_SENT;
     }
 
@@ -997,6 +1030,7 @@ static void sk_net_write_eof(Socket *sock)
 
     assert(s->outgoingeof == EOF_NO);
 
+    trace("write_eof fd=%d writable=%d buffered=%d", s->s, s->writable, (int)bufchain_size(&s->output_data));
     /* Mark the socket as pending outgoing EOF. */
     s->outgoingeof = EOF_PENDING;
 
@@ -1233,6 +1267,7 @@ static void sk_net_set_frozen(Socket *sock, bool is_frozen)
     if (s->frozen == is_frozen)
         return;
     s->frozen = is_frozen;
+    trace("set_frozen fd=%d frozen=%d", s->s, is_frozen);
     uxsel_tell(s);
 }
 
@@ -1288,6 +1323,7 @@ static void uxsel_tell(NetSocket *s)
                 rwx |= SELECT_W;
         }
     }
+    trace("uxsel_tell fd=%d rwx=%d", s->s, rwx);
     uxsel_set(s->s, rwx, net_select_result);
 }
 

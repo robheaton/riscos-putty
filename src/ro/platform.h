@@ -56,9 +56,11 @@ unsigned long getticks(void);
 #define BYTE unsigned char
 
 /*
- * RISC OS has exactly one clipboard: the global one, which is written by an
- * explicit action (Copy) and not by merely selecting text.  So we follow the
- * "explicit clipboard" defaults that upstream uses on OS X.
+ * RISC OS has exactly one clipboard: the global one.  As in PuTTY for Windows,
+ * selecting text with the mouse copies it there (so it can be pasted into any
+ * other application), and Shift-Insert pastes it.  The Wimp has no middle button,
+ * so a mouse paste is a menu item; the "implicit" mouse paste is the last text
+ * selected in the terminal.
  */
 #define PLATFORM_CLIPBOARDS(X)                            \
     X(CLIP_CLIPBOARD, "RISC OS clipboard")                \
@@ -72,7 +74,7 @@ unsigned long getticks(void);
 #define CLIPNAME_IMPLICIT "Last selected text"
 #define CLIPNAME_EXPLICIT "System clipboard"
 #define CLIPNAME_EXPLICIT_OBJECT "system clipboard"
-#define CLIPUI_DEFAULT_AUTOCOPY false
+#define CLIPUI_DEFAULT_AUTOCOPY true
 #define CLIPUI_DEFAULT_MOUSE CLIPUI_IMPLICIT
 #define CLIPUI_DEFAULT_INS CLIPUI_EXPLICIT
 #define MENU_CLIPBOARD CLIP_CLIPBOARD

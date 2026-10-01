@@ -1,0 +1,57 @@
+PuTTY for RISC OS
+
+PuTTY is a terminal program for logging in to other computers over a network:
+SSH (the secure shell), Telnet, Rlogin, or a plain connection.  This is a RISC OS
+port of PuTTY 0.85 by Simon Tatham and others.
+
+Starting
+--------
+Double-click !PuTTY to put its icon on the icon bar.  Click on the icon (or choose
+New session... from its menu) to open the Connect box:
+
+  Host name   the computer to log in to, e.g. pi.local or 192.168.1.5
+  Port        22 for SSH, 23 for Telnet
+  Connection  SSH, Telnet, Rlogin or Raw
+  Login name  the name to log in as (you are asked if you leave it empty)
+  Key file    a private key (.ppk) to log in with instead of a password:
+              drag the key's file onto the Connect box
+  Session     a name to save these settings under; Save, Load and Delete work
+              on saved sessions, and Sessions... lists them
+
+Settings... opens PuTTY's full configuration dialogue: choose a heading in the list
+on the left (click a heading with a + to see what is under it) and change what you
+need.  Its Open button starts the session.  Dragging a file onto a file box (a key
+file, a log file) fills in its name.
+
+Click Open to connect.  PuTTY asks you in the terminal window for a password if
+one is needed.  The first time you connect to a computer it shows the host key's
+fingerprint: choose Accept to remember it, or Connect Once to trust it just this
+time.  Adjust-click Open to keep the Connect box on screen.
+
+The terminal window
+-------------------
+Select-drag (or double or triple click) selects text, and Adjust-click extends the
+selection.  Selected text is copied to the RISC OS clipboard at once; Shift-Insert
+pastes the clipboard (Ctrl-Insert copies).  Mouse wheel and Shift-Page Up/Down
+scroll back through the output.  A text file dropped on the window is pasted.
+The left Alt key is Meta, as in a Unix terminal (Alt-F sends Escape then F); the right Alt
+key still types the special characters of your keyboard layout.
+
+Menu on the window gives Copy, Paste, Special command (Break, signals, ...),
+Event log (what PuTTY is doing and why a connection failed), Change settings
+(the configuration dialogue again, for the running session: Apply puts the changes
+to use at once), Restart session, Reset terminal, Clear scrollback, Duplicate
+session and New session.
+
+From the command line (for example from an Obey file) PuTTY takes the options of
+the other versions: putty -ssh -P 22 -l user -i keyfile host, or putty -load session.
+
+Files
+-----
+Settings, saved sessions and the host keys PuTTY has accepted are kept in the
+PuTTY directory of <Choices$Write>.
+
+Licence
+-------
+MIT.  See Licence.  PuTTY is copyright 1997-2024 Simon Tatham and contributors;
+the RISC OS port is copyright 2026 Rob Heaton.

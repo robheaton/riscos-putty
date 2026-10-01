@@ -1,0 +1,10 @@
+/*
+ * roversion.h - the version of the RISC OS port (PuTTY's own is in `ver`).
+ * It names the release zip and is stamped into !Help; bump it with each change.
+ */
+#ifndef PUTTY_ROVERSION_H
+#define PUTTY_ROVERSION_H
+
+#define RO_PORT_VERSION "0.01"
+
+#endif /* PUTTY_ROVERSION_H */

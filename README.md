@@ -1,34 +1,58 @@
-# riscos-putty
+# PuTTY for RISC OS
 
-A native RISC OS port of the PuTTY SSH/Telnet client (upstream 0.85).
+A native RISC OS port of the PuTTY SSH/Telnet client (upstream 0.85): a terminal
+window that runs in the desktop, with a Connect box and saved sessions.
 
-**Status (2026-10-01): the PuTTY core runs on RISC OS.** A console `plink` builds
-and works: in RPCEmu it connects to an SSH server, performs the hybrid NTRU
-Prime / Curve25519 key exchange, checks the host key, logs in with an ed25519
-key and runs a remote command. The Wimp terminal window - the real goal - is not
-started yet.
+**Status (2026-10-01): usable, early.** PuTTY's own code (SSH-2 with the hybrid
+NTRU Prime / Curve25519 key exchange, ed25519 and the other host and user key types,
+AES, ChaCha20, the terminal emulator) is compiled unchanged; this project adds the
+RISC OS front end. It has been tried in RPCEmu against PuTTY's test server and with
+vim, htop and whiptail. It has not yet been run on a real Pi.
 
-## Goal
+## Using it
 
-First milestone: a Wimp terminal window plus a simple Connect dialog (host, port,
-protocol, username, saved sessions, password and key login). PuTTY's full tabbed
-configuration dialog follows. The console `plink` is a bring-up step.
+Run `!PuTTY` (it puts an icon on the icon bar and opens the Connect box). Type the
+host name, check the port and connection type, give a login name (or leave it empty
+to be asked), and click Open. A private key (.ppk) can be dragged onto the Connect box;
+otherwise PuTTY asks for a password in the terminal window. Save, Load and Delete keep
+named sessions; Sessions... lists them. Settings... opens PuTTY's full configuration dialog
+(the tree of Session, Terminal, Window, Connection and SSH panels: fonts, colours, keys,
+proxies, tunnels and the rest); its Open button starts the session.
+
+In the terminal window: select with the mouse (drag, double-click, triple-click;
+Adjust extends); the selection goes straight to the RISC OS clipboard. Shift-Insert
+pastes, Ctrl-Insert copies, and a text file dropped on the window is pasted. The mouse
+wheel, the scroll bar and Shift-Page Up/Down scroll back. The left Alt key is Meta
+(Alt-F sends Escape then F); the right one still composes characters. Menu opens PuTTY's window
+menu: Copy, Paste, Special command, Event log (what PuTTY is doing, and why a
+connection failed), Change settings (the configuration dialog for the running
+session), Restart session, Reset terminal, Clear scrollback, Duplicate session,
+New session. `putty -ssh -P 22 -l user -i key.ppk host` and `putty -load
+session` work from the command line.
+
+Settings and host keys live in the PuTTY directory of `<Choices$Write>`.
+
+Not done yet: psftp/pscp/puttygen.
 
 ## Building
 
-Needs GCCSDK (`arm-unknown-riscos-gcc` 4.7), Perl and CMake (the last two only to
-generate a couple of source files). Same toolchain settings as `riscos-vncclient`:
+Needs GCCSDK (`arm-unknown-riscos-gcc` 4.7), Perl, CMake and Python 3 (CMake and Perl
+only to generate a couple of source files). Same toolchain settings as `riscos-vncclient`:
 `-mlibscl -march=armv4`, no runtime modules, runs in RPCEmu and on a Pi.
 
     make core      # compile the portable PuTTY core (244 files) into build/ro/libputty.a
-    make plink     # link build/ro/plink,ff8
+    make plink     # build/ro/plink,ff8: the console tool (bring-up and testing)
+    make putty     # build/ro/putty,ff8: the Wimp application
+    make app       # build/app/!PuTTY: the application directory
+    make dist      # build/PuTTY-<version>.zip, with RISC OS filetypes
+    make tests     # the diagnostics in tests/ro, for running in the emulator
     make V=1 ...   # show the full compiler commands
 
 PuTTY is compiled straight from the unpacked upstream tree (`upstream/putty-0.85`,
 untar `upstream/putty-0.85.tar.gz` there; `upstream/verify.sh` checks the tarball's
 checksum and PGP signature). The source lists in the Makefile are transcribed from
 upstream's `CMakeLists.txt` files. `src/ro/cmake.h` replaces the generated config
-header.
+header. The port's version is in `src/ro/roversion.h`.
 
 ## Testing
 
@@ -37,27 +61,36 @@ Upstream ships a test SSH server, Uppity. Build the native tools once, then:
     cmake -S upstream/putty-0.85 -B build/host -DPUTTY_GTK_VERSION=0
     make -C build/host
     tools/testserver.sh      # starts Uppity on 127.0.0.1:2222 with a test key
-    tools/deploy.sh          # copies plink and the test key into the emulator's HostFS
+    tools/deploy.sh          # copies plink, putty, !PuTTY and the test key into the emulator's HostFS
 
-Inside RPCEmu the host is 10.10.10.2; the script prints the exact `plink` command
-to run. Set the system variable `PuTTY$Timeout` (seconds) so a stuck test gives up
-instead of wedging the emulator, and `PuTTY$Trace` (a filename) to log socket events.
+Inside RPCEmu the host is 10.10.10.2; `testserver.sh` prints the host key fingerprint
+and an example command. Uppity also accepts the password `weasel` and
+keyboard-interactive answers `stoat` and `weasel`. `tools/vncdrive.py` drives the
+emulator's screen, mouse and keyboard over VNC for GUI tests (the VNC password is
+read from `RPCEMU_VNC_PASSWORD`), and `tools/sprite2png.py` turns a `*ScreenSave`
+into a PNG. For the console tool, set the system variable `PuTTY$Timeout` (seconds)
+so a stuck test gives up, and `PuTTY$Trace` (a filename) to log socket events.
 
 ## Layout
 
 - `upstream/` - pristine PuTTY 0.85 tarball, signature, checksums, public keys, `verify.sh`.
-- `src/ro/` - the RISC OS platform layer:
-  `net.c` (sockets over the Internet module), `storage.c` (sessions, host keys, seed under `Choices:`),
-  `noise.c` (entropy), `console.c`, `plink.c`, `unicode.c`, `util.c`, `stubs.c`, `compat.c`, `platform.h`, `cmake.h`.
-- `tests/ro/rtest.c` - diagnostic that shows what the Resolver SWIs return.
-- `tools/` - `testserver.sh`, `deploy.sh`.
+- `src/ro/` - the RISC OS code. The platform layer: `net.c` (sockets over the Internet
+  module), `storage.c` (sessions, host keys, seed under `Choices:`), `noise.c` (entropy),
+  `unicode.c`, `util.c`, `stubs.c`, `compat.c`, `platform.h`, `cmake.h`, and the console
+  tool `console.c`/`plink.c`. The Wimp front end: `roapp.c` (task, poll loop, icon bar),
+  `rowindow.c` (terminal window: cell grid, painting, keys, mouse), `roseat.c` (how a
+  session talks to its user), `roclip.c` (clipboard), `rocontext.c` (window menu),
+  `roconnect.c` (Connect box), `rofont.c`, `rodlg.c`/`rodialog.c`/`romenu.c`/`rowimp.c`
+  (dialogue, menu and Wimp helpers).
+- `app/!PuTTY/` - the application directory's static files.
+- `tests/ro/` - diagnostics run in the emulator: the Resolver SWIs (`dnstest`), the Font Manager, the HAL
+  counter, and half-closed connections on the loopback (`halfclose`).
+- `tools/echoserver.py`, `tools/conchserver.py`, `tools/testproxy.py` - test servers: a Telnet/Raw echo
+  server, a second SSH implementation (Twisted Conch, with port forwarding), and an HTTP/SOCKS proxy.
+- `tools/cryptomatrix.py` - runs every cipher, MAC, key exchange, key type and compression mode
+  through plink in RPCEmu against Uppity (see docs/DESIGN.md).
+- `tools/` - test server, deploy, sprite and zip tools.
 - `docs/DESIGN.md` - decisions and findings.
-
-## Next steps
-
-1. Known-answer crypto tests on ARM compared with the host build.
-2. The Wimp terminal window (`TermWin` and `Seat` vtables, modelled on `unix/window.c`) and Connect dialog.
-3. Then the generic configuration dialog, and psftp/pscp/puttygen.
 
 ## Licence
 

@@ -40,3 +40,21 @@ size_t wcrtomb(char *s, wchar_t wc, mbstate_t *ps)
     *s = (char)wc;
     return 1;
 }
+
+int wcsncmp(const wchar_t *a, const wchar_t *b, size_t n)
+{
+    for (; n > 0; n--, a++, b++) {
+        if (*a != *b)
+            return *a < *b ? -1 : 1;
+        if (*a == 0)
+            return 0;
+    }
+    return 0;
+}
+
+int wcscmp(const wchar_t *a, const wchar_t *b)
+{
+    for (; *a && *a == *b; a++, b++)
+        ;
+    return *a < *b ? -1 : *a > *b;
+}

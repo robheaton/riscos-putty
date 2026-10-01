@@ -118,23 +118,72 @@ $(B)/libputty.a: $(CORE_O) $(GEN_O)
 	$(Q)$(RAR) rcs $@ $^
 
 # ---- the platform layer (ours) and the generic pieces of upstream's unix/ ----
-RO_SRC   := net util storage noise unicode console stubs compat
+RO_SRC   := net util storage noise unicode stubs compat
 RO_O     := $(addprefix $(B)/ro/,$(addsuffix .o,$(RO_SRC)))
 # Unix files that are not Unix-specific at all, used as they stand.
 UXGEN    := unix/uxsel unix/utils/cmdline_arg unix/utils/fontspec unix/utils/pgp_fingerprints
 UXGEN_O  := $(addprefix $(B)/up/,$(addsuffix .o,$(UXGEN)))
 # Stand-ins for things plink does not use (picked ahead of the real ones in the library).
 PLINK_STUBS := stubs/no-agent stubs/no-gss stubs/no-lineedit stubs/no-term
-PLINK_O  := $(B)/ro/plink.o $(B)/be_plink.o $(RO_O) $(UXGEN_O) \
+PLINK_O  := $(B)/ro/plink.o $(B)/ro/console.o $(B)/be_plink.o $(RO_O) $(UXGEN_O) \
             $(addprefix $(B)/up/,$(addsuffix .o,$(PLINK_STUBS)))
 
 $(B)/plink,ff8: $(PLINK_O) $(B)/libputty.a
 	@echo "  LD  $@"
 	$(Q)$(RCC) $(LDFLAGS) -o $@ $(PLINK_O) -Wl,--start-group $(B)/libputty.a -Wl,--end-group
 
-.PHONY: core plink clean
+
+# ---- the Wimp application ---------------------------------------------------
+GUI_SRC  := roapp rowindow roseat rowimp rofont rodlg rodialog romenu roclip rocontext roconnect roconfig rocfgwin
+GUI_O    := $(addprefix $(B)/ro/,$(addsuffix .o,$(GUI_SRC)))
+GUI_STUBS := stubs/no-agent stubs/no-gss stubs/no-console stubs/no-dit stubs/no-printing
+GUI_O    += $(addprefix $(B)/up/,$(addsuffix .o,$(GUI_STUBS)))
+GUI_ALL  := $(GUI_O) $(B)/be_putty.o $(RO_O) $(UXGEN_O)
+
+$(B)/be_putty.o: $(U)/be_list.c
+	@mkdir -p $(@D)
+	@echo "  CC  $<  (putty backends)"
+	$(Q)$(RCC) $(UFLAGS) -DSSH=1 -DSERIAL=0 -DOTHERBACKENDS=1 -DAPPNAME=PuTTY -c -o $@ $<
+
+$(B)/putty,ff8: $(GUI_ALL) $(B)/libputty.a
+	@echo "  LD  $@"
+	$(Q)$(RCC) $(LDFLAGS) -o $@ $(GUI_ALL) -Wl,--start-group $(B)/libputty.a -Wl,--end-group
+
+# ---- diagnostics for the emulator (tests/ro/*.c, each a small stand-alone program) ----
+TEST_SRC := $(wildcard tests/ro/*.c)
+FF8      := ,ff8
+TEST_BIN := $(patsubst tests/ro/%.c,$(B)/%$(FF8),$(TEST_SRC))
+
+$(B)/%,ff8: tests/ro/%.c
+	@mkdir -p $(@D)
+	@echo "  CC  $<"
+	$(Q)$(RCC) -std=gnu99 -O2 $(CPU) -Wall -o $@ $<
+
+.PHONY: core plink putty app dist tests clean
 core: $(B)/libputty.a
 plink: $(B)/plink,ff8
+putty: $(B)/putty,ff8
+tests: $(TEST_BIN)
+
+# ---- the application directory and the release zip -----------------------------
+# The port's version (src/ro/roversion.h) names the zip and heads !Help.
+VERSION := $(shell sed -n 's/^\#define RO_PORT_VERSION *"\(.*\)"/\1/p' src/ro/roversion.h)
+
+# Files carry their RISC OS filetype as a ",xxx" suffix (understood by HostFS, and
+# turned into the proper zip extra fields by tools/mkzip.py).
+APPDIR := build/app/!PuTTY
+app: $(B)/putty,ff8
+	rm -rf build/app
+	mkdir -p $(APPDIR)
+	cp -r app/'!PuTTY'/. $(APPDIR)/
+	cp $(B)/putty,ff8 $(APPDIR)/'!RunImage,ff8'
+	python3 tools/mksprites.py $(APPDIR)/'!Sprites,ff9'
+	sed -i '1s/.*/PuTTY for RISC OS $(VERSION)/' $(APPDIR)/'!Help,fff'
+
+dist: app
+	cp README.md build/ReadMe,fff
+	cp LICENSE build/Licence,fff
+	python3 tools/mkzip.py build/PuTTY-$(VERSION).zip $(APPDIR) build/ReadMe,fff build/Licence,fff
 
 clean:
 	rm -rf build

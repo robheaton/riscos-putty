@@ -52,6 +52,10 @@ static inline uint32_t ro_time(void)
     return (uint32_t)t;
 }
 
+/* True if the only entropy is timing jitter and the seed file (see noise.c). */
+#include <stdbool.h>
+bool ro_entropy_is_weak(void);
+
 /* Set the RISC OS filetype of a file (OS_File 18). */
 static inline void ro_set_filetype(const char *path, int filetype)
 {
