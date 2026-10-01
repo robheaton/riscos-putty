@@ -21,4 +21,8 @@ fi
 FP=$($H/puttygen -l $T/hostkey.ppk | awk '{print $3}')
 echo "host key fingerprint: $FP"
 echo "in RPCEmu:  Run HostFS::HostFS.\$.PuttyDev.plink -batch -v -i HostFS::HostFS.\$.PuttyDev.ClientKey -l tester -P 2222 -hostkey $FP 10.10.10.2 echo hello"
-exec $H/uppity --listen 2222 --hostkey $T/hostkey.ppk --userkey $T/client.pub --verbose
+# Sessions get a clean environment and a scratch home directory, not yours.
+mkdir -p $T/home
+exec env -i HOME="$PWD/$T/home" PATH=/usr/bin:/bin SHELL=/bin/sh PS1='$ ' \
+    $H/uppity --listen 2222 --hostkey $T/hostkey.ppk --userkey $T/client.pub \
+    --sessiondir "$PWD/$T/home" --verbose
