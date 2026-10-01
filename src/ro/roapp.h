@@ -9,8 +9,9 @@
 /* Open the Connect dialogue (start a new session). */
 void roapp_connect_dialog(void);
 
-/* The "About PuTTY" box. */
-void roapp_about(void);
+/* The window of the standard "About this program" box, for use as the submenu of an
+ * Info menu item (menu_set_window); 0 if it could not be made. */
+int roapp_info_window(void);
 
 /* Menu_Selection events do not say which menu they came from, so whoever opens a
  * menu says who is to hear about its selection. */

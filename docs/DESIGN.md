@@ -148,6 +148,21 @@ Connect box), `roconfig.c`/`rocfgwin.c` (the configuration dialogue), `rofont.c`
 `rodlg.c`/`rodialog.c` (dialogues and message boxes), `romenu.c`, `rowimp.[ch]`. `rowimp`, `rodlg`, `romenu` and the clipboard protocol are adapted from riscos-vncclient
 (same author).
 
+The icon bar menu follows the usual RISC OS pattern: Info (first), Help..., the application's entries (New
+session..., Sessions >), Quit. **Info** opens the standard "About this program" window. It is not a
+message box: it is a window made by `rodlg.c` in its `DLG_MENU` style (a title bar and nothing else) and used
+directly as the submenu of the Info item (`menu_set_window`: the item's submenu pointer is the window handle,
+which the Wimp opens beside the item and closes with the menu). The layout was measured from the ROM's !Edit
+and !Paint (Toolbox ProgInfo) in the emulator: a 320 pixel wide window, labels 76 wide and right-aligned, sunken
+read-only fields (`DI_DISPLAY`, validation `R2`) 26 high and 30 apart; the title is "About this program" and the
+rows are Name, Purpose, Author, Port, Licence and Version ("0.04 (01-Oct-26), PuTTY 0.85", the date from
+`RO_PORT_DATE` in `roversion.h`). The terminal's window menu has the same Info item at its foot. **Sessions**
+lists the saved sessions each time the menu is opened (so one saved a moment ago is there) and starts the
+chosen one at once, or opens the Connect box with it loaded if it has no host name. **Help...** runs
+`Filer_Run <PuTTY$Dir>.!Help` (with the real path, so the editor's title shows it). A window's size in rows and
+columns is kept in its `Conf` as it is dragged, so Change settings shows it, Duplicate session copies it, and
+saving the session from the Session panel keeps it.
+
 The poll loop (`roapp.c`): one Wimp task runs every session. Each trip round the loop gives the Wimp a
 turn (`Wimp_PollIdle`, waking every two centiseconds while a session exists so incoming data is
 noticed promptly), runs what PuTTY has pending (sockets through `ro_net_poll`, timers, top-level

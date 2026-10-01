@@ -639,6 +639,12 @@ static void resize_cells(RoTerm *t, int cols, int rows)
 {
     if (cols == t->cols && rows == t->rows) return;
     if (!alloc_grid(t, cols, rows)) return;
+    if (t->conf && !t->is_log) {
+        /* The window's size is part of its settings: Change settings shows what it is now,
+         * Duplicate session opens one the same size, and saving the session keeps it. */
+        conf_set_int(t->conf, CONF_width, cols);
+        conf_set_int(t->conf, CONF_height, rows);
+    }
     set_extent(t);
     tell_size(t);
     force_redraw_all(t);

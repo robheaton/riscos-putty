@@ -175,13 +175,75 @@ void roapp_menu_opened(RoMenuHandler handler)
     menu_handler = handler;
 }
 
-enum { IB_NEW, IB_ABOUT, IB_QUIT };
+/*
+ * The icon bar menu follows the usual RISC OS pattern: Info first (its submenu is the
+ * "About this program" window), then Help, the application's own entries, and Quit.
+ */
+enum { IB_INFO, IB_HELP, IB_NEW, IB_SESSIONS, IB_QUIT };
+
+static dlg   *d_info;
+static menu  *sessions_menu;           /* the saved sessions, as the Sessions submenu shows them */
+static char **session_names;
+static int    nsessions;
+static int    menu_x, menu_y;          /* where the icon bar menu was opened (for Adjust) */
+
+/*
+ * The standard "About this program" box, laid out as the Toolbox's ProgInfo and the
+ * ROM applications show it (Edit, Paint): a title bar and nothing else, a right-aligned
+ * label and a sunken read-only field for each of name, purpose, author, port,
+ * licence and version.  It is the submenu of the Info item, so the Wimp opens and
+ * closes it.  Sizes are in pixels, as measured from !Edit's: 320 wide, rows 30
+ * apart, fields 26 high, labels 76 wide.
+ */
+enum { I_NAME = 10, I_PURPOSE, I_AUTHOR, I_PORT, I_LICENCE, I_VERSION };
+
+static void build_info(void)
+{
+    static const dlg_item items[] = {
+        { DI_RLABEL,  0,         0,   4, 76, 26, "Name",    0, 0, NULL },
+        { DI_DISPLAY, I_NAME,    77,  4, 238, 26, "",       0, 0, NULL },
+        { DI_RLABEL,  0,         0,  34, 76, 26, "Purpose", 0, 0, NULL },
+        { DI_DISPLAY, I_PURPOSE, 77, 34, 238, 26, "",       0, 0, NULL },
+        { DI_RLABEL,  0,         0,  64, 76, 26, "Author",  0, 0, NULL },
+        { DI_DISPLAY, I_AUTHOR,  77, 64, 238, 26, "",       0, 0, NULL },
+        { DI_RLABEL,  0,         0,  94, 76, 26, "Port",    0, 0, NULL },
+        { DI_DISPLAY, I_PORT,    77, 94, 238, 26, "",       0, 0, NULL },
+        { DI_RLABEL,  0,         0, 124, 76, 26, "Licence", 0, 0, NULL },
+        { DI_DISPLAY, I_LICENCE, 77, 124, 238, 26, "",      0, 0, NULL },
+        { DI_RLABEL,  0,         0, 154, 76, 26, "Version", 0, 0, NULL },
+        { DI_DISPLAY, I_VERSION, 77, 154, 238, 26, "",      0, 0, NULL },
+    };
+    char text[64];
+
+    d_info = dlg_new_style(DLG_MENU, "About this program", 320, 184, items,
+                           (int)(sizeof items / sizeof items[0]), NULL, NULL);
+    if (!d_info) return;
+    dlg_set_text(d_info, I_NAME, "PuTTY");
+    dlg_set_text(d_info, I_PURPOSE, "SSH and Telnet client");
+    dlg_set_text(d_info, I_AUTHOR, "Simon Tatham and others");
+    dlg_set_text(d_info, I_PORT, "Rob Heaton and Claude, 2026");
+    dlg_set_text(d_info, I_LICENCE, "MIT licence");
+    snprintf(text, sizeof text, "%s (%s), PuTTY %.*s", RO_PORT_VERSION, RO_PORT_DATE,
+             (int)strspn(ver + (strncmp(ver, "Release ", 8) ? 0 : 8), "0123456789."),
+             ver + (strncmp(ver, "Release ", 8) ? 0 : 8));
+    dlg_set_text(d_info, I_VERSION, text);
+    dlg_set_help(d_info, "Information about this program: its name, purpose, author, licence and version.");
+}
+
+int roapp_info_window(void)
+{
+    return d_info ? dlg_window(d_info) : 0;
+}
 
 static void build_menus(void)
 {
+    build_info();
     iconbar_menu = menu_new(APP_NAME);
+    menu_add(iconbar_menu, "Info", 0);
+    if (d_info) menu_set_window(iconbar_menu, IB_INFO, dlg_window(d_info));
+    menu_add(iconbar_menu, "Help...", 0);
     menu_add(iconbar_menu, "New session...", 0);
-    menu_add(iconbar_menu, "About PuTTY...", MF_DOTTED);
+    menu_add(iconbar_menu, "Sessions", 0);
     menu_add(iconbar_menu, "Quit", 0);
 }
 
@@ -190,15 +252,17 @@ void roapp_connect_dialog(void)
     roconnect_open();
 }
 
-void roapp_about(void)
+/* Open the help file (!Help in the application directory) in whatever shows text. */
+static void open_help(void)
 {
-    char *text = dupprintf("PuTTY for RISC OS %s\nbased on PuTTY %s\n\n"
-                           "PuTTY is copyright 1997-2024 Simon Tatham and contributors.\n"
-                           "The RISC OS port is copyright 2026 Rob Heaton.\n"
-                           "Both are distributed under the MIT licence.",
-                           RO_PORT_VERSION, ver);
-    ro_notice(NULL, "About PuTTY", text);
-    sfree(text);
+    const char *dir = getenv("PuTTY$Dir");           /* set by !Boot and !Run */
+    if (dir && *dir) {
+        char *cmd = dupprintf("Filer_Run %s.!Help", dir);   /* the real path, so the editor's title shows it */
+        _swix(OS_CLI, _IN(0), cmd);
+        sfree(cmd);
+    } else {
+        ro_notice(NULL, "PuTTY", "The help is the !Help file in the !PuTTY application directory.");
+    }
 }
 
 static int live_sessions(void)
@@ -232,26 +296,70 @@ static void request_quit(void)
     sfree(msg);
 }
 
+static void iconbar_selection(const int *sel);
+
+/*
+ * Open the icon bar menu.  The Sessions submenu lists the sessions saved when the menu
+ * is opened, so a session saved a moment ago is there.  The previous list is freed
+ * only after the new menu is up, because the Wimp may still be showing it.
+ */
+static void open_iconbar_menu(int x, int y)
+{
+    menu *old_menu = sessions_menu;
+    char **old_names = session_names;
+    const int old_n = nsessions;
+    int i;
+
+    session_names = roconnect_session_names(&nsessions);
+    if (nsessions > 0) {
+        sessions_menu = menu_new("Sessions");
+        for (i = 0; i < nsessions && i < MAX_MENU_ITEMS; i++)
+            menu_add(sessions_menu, session_names[i], 0);
+    } else {
+        sessions_menu = NULL;
+    }
+    menu_set_sub(iconbar_menu, IB_SESSIONS, sessions_menu);
+    menu_shade(iconbar_menu, IB_SESSIONS, sessions_menu == NULL);
+
+    menu_x = x;
+    menu_y = y;
+    roapp_menu_opened(iconbar_selection);
+    menu_open(iconbar_menu, x, y);
+
+    menu_free(old_menu);
+    roconnect_free_names(old_names, old_n);
+}
+
 static void iconbar_selection(const int *sel)
 {
+    wpointer p;
+
     switch (sel[0]) {
+      case IB_INFO:
+        return;                        /* its window is the submenu; nothing to do */
+      case IB_HELP:
+        open_help();
+        break;
       case IB_NEW:
         roapp_connect_dialog();
         break;
-      case IB_ABOUT:
-        roapp_about();
+      case IB_SESSIONS:
+        if (sel[1] >= 0 && sel[1] < nsessions)
+            roconnect_start_session(session_names[sel[1]]);
         break;
       case IB_QUIT:
         request_quit();
-        break;
+        return;
     }
+    /* Adjust keeps the menu on screen, as for every other menu */
+    if (!_swix(Wimp_GetPointerInfo, _IN(1), &p) && (p.buttons & BTN_ADJUST))
+        open_iconbar_menu(menu_x, menu_y);
 }
 
 static void iconbar_click(wevent *e)
 {
     if (e->mouse.buttons & BTN_MENU) {
-        roapp_menu_opened(iconbar_selection);
-        menu_open(iconbar_menu, e->mouse.x - 64, 96 + 44 * iconbar_menu->nitems);
+        open_iconbar_menu(e->mouse.x - 64, 96 + 44 * iconbar_menu->nitems);
         return;
     }
     roapp_connect_dialog();

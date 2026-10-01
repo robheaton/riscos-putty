@@ -19,6 +19,9 @@ named sessions; Sessions... lists them. Settings... opens PuTTY's full configura
 (the tree of Session, Terminal, Window, Connection and SSH panels: fonts, colours, keys,
 proxies, tunnels and the rest); its Open button starts the session.
 
+Menu on the icon bar icon gives Info (the standard "About this program" box), Help, New session...,
+Sessions (the saved sessions: choose one to connect at once) and Quit.
+
 In the terminal window: select with the mouse (drag, double-click, triple-click;
 Adjust extends); the selection goes straight to the RISC OS clipboard. Shift-Insert
 pastes, Ctrl-Insert copies, and a text file dropped on the window is pasted. The mouse

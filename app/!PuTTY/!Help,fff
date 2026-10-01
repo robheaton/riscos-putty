@@ -7,7 +7,16 @@ port of PuTTY 0.85 by Simon Tatham and others.
 Starting
 --------
 Double-click !PuTTY to put its icon on the icon bar.  Click on the icon (or choose
-New session... from its menu) to open the Connect box:
+New session... from its menu) to open the Connect box.  Menu on the icon gives:
+
+  Info          about this program (its version and licence)
+  Help...       this file
+  New session...  the Connect box
+  Sessions      the sessions you have saved: choose one to connect straight away
+                (Adjust-click keeps the menu open)
+  Quit
+
+The Connect box has:
 
   Host name   the computer to log in to, e.g. pi.local or 192.168.1.5
   Port        22 for SSH, 23 for Telnet
@@ -41,7 +50,9 @@ Menu on the window gives Copy, Paste, Special command (Break, signals, ...),
 Event log (what PuTTY is doing and why a connection failed), Change settings
 (the configuration dialogue again, for the running session: Apply puts the changes
 to use at once), Restart session, Reset terminal, Clear scrollback, Duplicate
-session and New session.
+session (the same settings and window size) and New session, and Info.  Dragging the
+window's size box changes the number of rows and columns; Change settings shows
+the new size and Save in its Session panel keeps it.
 
 From the command line (for example from an Obey file) PuTTY takes the options of
 the other versions: putty -ssh -P 22 -l user -i keyfile host, or putty -load session.

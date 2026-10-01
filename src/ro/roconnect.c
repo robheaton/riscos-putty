@@ -180,6 +180,39 @@ static void read_session_list(void)
     qsort(sess_names + 1, (size_t)(sess_count - 1), sizeof *sess_names, name_cmp);
 }
 
+char **roconnect_session_names(int *count)
+{
+    settings_e *e = enum_settings_start();
+    strbuf *sb = strbuf_new();
+    int cap = 16, n = 0;
+    char **names = snewn(cap, char *);
+
+    if (e) {
+        while (enum_settings_next(e, sb)) {
+            if (strcmp(sb->s, DEFAULT_SETTINGS)) {       /* it has no host to connect to */
+                if (n == cap) {
+                    cap *= 2;
+                    names = sresize(names, cap, char *);
+                }
+                names[n++] = dupstr(sb->s);
+            }
+            strbuf_clear(sb);
+        }
+        enum_settings_finish(e);
+    }
+    strbuf_free(sb);
+    qsort(names, (size_t)n, sizeof *names, name_cmp);
+    *count = n;
+    return names;
+}
+
+void roconnect_free_names(char **names, int count)
+{
+    int i;
+    for (i = 0; i < count; i++) sfree(names[i]);
+    sfree(names);
+}
+
 static void load_session(const char *name)
 {
     const bool is_default = !strcmp(name, DEFAULT_SETTINGS);
@@ -407,6 +440,29 @@ void roconnect_open(void)
     }
     dlg_open(d_conn);
     dlg_focus(d_conn, C_HOST);
+}
+
+void roconnect_start_session(const char *name)
+{
+    Conf *c = conf_new();
+
+    if (!do_defaults(name, c)) {
+        char *msg = dupprintf("There is no saved session called \"%s\".", name);
+        ro_notice(NULL, "PuTTY", msg);
+        sfree(msg);
+        conf_free(c);
+        return;
+    }
+    if (!conf_launchable(c)) {                           /* nowhere to connect to: ask */
+        conf_free(c);
+        roconnect_open();
+        if (d_conn) {
+            dlg_set_text(d_conn, C_SESSION, name);
+            load_session(name);
+        }
+        return;
+    }
+    if (!roterm_new(c)) conf_free(c);
 }
 
 int roconnect_message(const wmessage *m)

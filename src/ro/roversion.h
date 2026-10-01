@@ -5,6 +5,7 @@
 #ifndef PUTTY_ROVERSION_H
 #define PUTTY_ROVERSION_H
 
-#define RO_PORT_VERSION "0.03"
+#define RO_PORT_VERSION "0.04"
+#define RO_PORT_DATE    "01-Oct-26"     /* shown in the Info box, as dd-Mon-yy */
 
 #endif /* PUTTY_ROVERSION_H */
