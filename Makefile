@@ -2,6 +2,8 @@
 #
 #   make core       compile the portable PuTTY core for RISC OS (objects + libputty.a)
 #   make plink      link the console bring-up tool
+#   make puttygen   link the console key generator and converter
+#   make psftp pscp link the secure file transfer tools
 #   make clean
 #
 # The RISC OS build uses GCCSDK's old GCC 4.7 toolchain with the Shared C
@@ -61,16 +63,19 @@ CRYPTO  := $(call p,crypto,aes-common aes-select aes-sw aesgcm-common aesgcm-sel
 SSH     := $(call p,ssh,bpp1 bpp2 bpp-bare ca-config censor1 censor2 common connection1 \
   connection2 crc-attack-detector gssc login1 nocompress pgssapi portfwd \
   transient-hostkey-cache transport2 verstring x11fwd zlib agentf connection1-client \
-  connection2-client kex2-client mainchan sharing ssh userauth2-client)
+  connection2-client kex2-client mainchan sharing ssh userauth2-client sftp sftpcommon)
 PROXY   := $(call p,proxy,cproxy sshproxy proxy http socks4 socks5 telnet newmain local \
   interactor)
 OTHERBE := $(call p,otherbackends,raw rlogin supdup telnet)
 TERMINAL:= $(call p,terminal,terminal bidi lineedit)
 CHARSET := $(call p,charset,fromucs localenc macenc mimeenc sbcs slookup toucs utf8 xenc)
+KEYGEN  := $(call p,keygen,dsa ecdsa millerrabin mpunsafe pockle prime primecandidate rsa \
+  smallprimes)
 ROOT    := sshpubk sshrand pinger logging callback timing cmdline settings errsock x11disp \
-  clicons console ldisc config dialog import utils/logeventf
+  clicons console ldisc config dialog import utils/logeventf psftpcommon
 
-CORE    := $(UTILS) $(STUBS) $(CRYPTO) $(SSH) $(PROXY) $(OTHERBE) $(TERMINAL) $(CHARSET) $(ROOT)
+CORE    := $(UTILS) $(STUBS) $(CRYPTO) $(KEYGEN) $(SSH) $(PROXY) $(OTHERBE) $(TERMINAL) $(CHARSET) \
+  $(ROOT)
 CORE_O  := $(addprefix $(B)/up/,$(addsuffix .o,$(CORE)))
 
 # ---- generated sources ------------------------------------------------------
@@ -132,6 +137,57 @@ $(B)/plink,ff8: $(PLINK_O) $(B)/libputty.a
 	@echo "  LD  $@"
 	$(Q)$(RCC) $(LDFLAGS) -o $@ $(PLINK_O) -Wl,--start-group $(B)/libputty.a -Wl,--end-group
 
+# ---- puttygen ----------------------------------------------------------------
+# Upstream's cmdgen.c with the three changes in patches/cmdgen.patch (a scratch file
+# name that works with RISC OS pathnames, and the --random-device help); it is compiled
+# from the patched copy in build/gen.  It has no network and no timers, so it takes
+# upstream's no-timing stub instead of net.o.
+$(G)/cmdgen.c: $(U)/cmdgen.c patches/cmdgen.patch
+	@mkdir -p $(@D)
+	patch -s -o $@ $(U)/cmdgen.c patches/cmdgen.patch
+
+PUTTYGEN_O := $(B)/gen/cmdgen.o $(B)/ro/console.o $(B)/ro/keygen-noise.o \
+              $(addprefix $(B)/ro/,util.o storage.o noise.o unicode.o compat.o) \
+              $(addprefix $(B)/up/,stubs/no-timing.o unix/utils/cmdline_arg.o \
+                unix/utils/fontspec.o unix/utils/pgp_fingerprints.o)
+
+$(B)/puttygen,ff8: $(PUTTYGEN_O) $(B)/libputty.a
+	@echo "  LD  $@"
+	$(Q)$(RCC) $(LDFLAGS) -o $@ $(PUTTYGEN_O) -Wl,--start-group $(B)/libputty.a -Wl,--end-group
+
+
+# ---- psftp and pscp ----------------------------------------------------------
+# Upstream's psftp.c and pscp.c with the few lines in patches/ changed (how a file's name
+# and type are worked out on RISC OS); the platform part is src/ro/sftp.c.  They share a
+# library of SFTP and pscp code with the other tools and need the network, so net.o is in.
+$(G)/psftp.c: $(U)/psftp.c patches/psftp.patch
+	@mkdir -p $(@D)
+	patch -s -o $@ $(U)/psftp.c patches/psftp.patch
+
+$(G)/pscp.c: $(U)/pscp.c patches/pscp.patch
+	@mkdir -p $(@D)
+	patch -s -o $@ $(U)/pscp.c patches/pscp.patch
+
+$(B)/be_psftp.o: $(U)/be_list.c
+	@mkdir -p $(@D)
+	@echo "  CC  $<  (psftp backends)"
+	$(Q)$(RCC) $(UFLAGS) -DSSH=1 -DSERIAL=0 -DOTHERBACKENDS=0 -DAPPNAME=PSFTP -c -o $@ $<
+
+$(B)/be_pscp.o: $(U)/be_list.c
+	@mkdir -p $(@D)
+	@echo "  CC  $<  (pscp backends)"
+	$(Q)$(RCC) $(UFLAGS) -DSSH=1 -DSERIAL=0 -DOTHERBACKENDS=0 -DAPPNAME=PSCP -c -o $@ $<
+
+SFTP_O := $(B)/ro/sftp.o $(B)/ro/console.o $(RO_O) $(UXGEN_O) \
+          $(addprefix $(B)/up/,$(addsuffix .o,$(PLINK_STUBS)))
+
+$(B)/psftp,ff8: $(B)/gen/psftp.o $(B)/be_psftp.o $(SFTP_O) $(B)/libputty.a
+	@echo "  LD  $@"
+	$(Q)$(RCC) $(LDFLAGS) -o $@ $(B)/gen/psftp.o $(B)/be_psftp.o $(SFTP_O) -Wl,--start-group $(B)/libputty.a -Wl,--end-group
+
+$(B)/pscp,ff8: $(B)/gen/pscp.o $(B)/be_pscp.o $(SFTP_O) $(B)/libputty.a
+	@echo "  LD  $@"
+	$(Q)$(RCC) $(LDFLAGS) -o $@ $(B)/gen/pscp.o $(B)/be_pscp.o $(SFTP_O) -Wl,--start-group $(B)/libputty.a -Wl,--end-group
 
 # ---- the Wimp application ---------------------------------------------------
 GUI_SRC  := roapp rowindow roseat rowimp rofont rodlg rodialog romenu roclip rocontext roconnect roconfig rocfgwin
@@ -159,9 +215,12 @@ $(B)/%,ff8: tests/ro/%.c
 	@echo "  CC  $<"
 	$(Q)$(RCC) -std=gnu99 -O2 $(CPU) -Wall -o $@ $<
 
-.PHONY: core plink putty app dist tests clean
+.PHONY: core plink puttygen psftp pscp putty app dist tests clean
 core: $(B)/libputty.a
 plink: $(B)/plink,ff8
+puttygen: $(B)/puttygen,ff8
+psftp: $(B)/psftp,ff8
+pscp: $(B)/pscp,ff8
 putty: $(B)/putty,ff8
 tests: $(TEST_BIN)
 
@@ -172,11 +231,15 @@ VERSION := $(shell sed -n 's/^\#define RO_PORT_VERSION *"\(.*\)"/\1/p' src/ro/ro
 # Files carry their RISC OS filetype as a ",xxx" suffix (understood by HostFS, and
 # turned into the proper zip extra fields by tools/mkzip.py).
 APPDIR := build/app/!PuTTY
-app: $(B)/putty,ff8
+# The command-line tools go in !PuTTY.Tools, which !Boot and !Run put on the Run$Path.
+app: $(B)/putty,ff8 $(B)/puttygen,ff8 $(B)/psftp,ff8 $(B)/pscp,ff8
 	rm -rf build/app
-	mkdir -p $(APPDIR)
+	mkdir -p $(APPDIR)/Tools
 	cp -r app/'!PuTTY'/. $(APPDIR)/
 	cp $(B)/putty,ff8 $(APPDIR)/'!RunImage,ff8'
+	cp $(B)/puttygen,ff8 $(APPDIR)/Tools/'puttygen,ff8'
+	cp $(B)/psftp,ff8 $(APPDIR)/Tools/'psftp,ff8'
+	cp $(B)/pscp,ff8 $(APPDIR)/Tools/'pscp,ff8'
 	python3 tools/mksprites.py $(APPDIR)/'!Sprites,ff9'
 	sed -i '1s/.*/PuTTY for RISC OS $(VERSION)/' $(APPDIR)/'!Help,fff'
 

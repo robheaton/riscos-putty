@@ -1,0 +1,78 @@
+--- pscp.c
++++ pscp.c
+@@ -21,6 +21,7 @@
+ 
+ #include "putty.h"
+ #include "psftp.h"
++#include "rosftp.h"
+ #include "ssh.h"
+ #include "ssh/sftp.h"
+ #include "storage.h"
+@@ -550,6 +551,8 @@
+  */
+ static char *colon(const char *str)
+ {
++    if (ro_looks_local(str))
++        return (NULL);
+     /* We ignore a leading colon, since the hostname cannot be
+        empty. We also ignore a colon as second character because
+        of filenames like f:myfile.txt. */
+@@ -1642,14 +1645,7 @@
+         return;
+     }
+ 
+-    if ((last = strrchr(src, '/')) == NULL)
+-        last = src;
+-    else
+-        last++;
+-    if (strrchr(last, '\\') != NULL)
+-        last = strrchr(last, '\\') + 1;
+-    if (last == src && strchr(src, ':') != NULL)
+-        last = strchr(src, ':') + 1;
++    last = ro_local_path_to_remote_leaf(src);
+ 
+     f = open_existing_file(src, &size, &mtime, &atime, &permissions);
+     if (f == NULL) {
+@@ -1712,14 +1708,7 @@
+     char *save_target;
+     DirHandle *dir;
+ 
+-    if ((last = strrchr(src, '/')) == NULL)
+-        last = src;
+-    else
+-        last++;
+-    if (strrchr(last, '\\') != NULL)
+-        last = strrchr(last, '\\') + 1;
+-    if (last == src && strchr(src, ':') != NULL)
+-        last = strchr(src, ':') + 1;
++    last = ro_local_path_to_remote_leaf(src);
+ 
+     /* maybe send filetime */
+ 
+@@ -1735,7 +1724,7 @@
+     if (dir != NULL) {
+         char *filename;
+         while ((filename = read_filename(dir)) != NULL) {
+-            char *foundfile = dupcat(src, "/", filename);
++            char *foundfile = dir_file_cat(src, filename);
+             source(foundfile);
+             sfree(foundfile);
+             sfree(filename);
+@@ -1865,7 +1854,7 @@
+             if (targ[0] != '\0')
+                 destfname = dir_file_cat(targ, striptarget);
+             else
+-                destfname = dupstr(striptarget);
++                destfname = dupstr(ro_remote_leaf_to_local(striptarget));
+         } else {
+             /*
+              * In this branch of the if, the target area is a
+@@ -1916,7 +1905,7 @@
+         stat_starttime = time(NULL);
+         stat_lasttime = 0;
+         stat_name = stripctrl_string(
+-            string_scc, stripslashes(destfname, true));
++            string_scc, ro_local_leaf(destfname));
+ 
+         received = 0;
+         while (received < act.size) {

@@ -48,6 +48,8 @@ static const int wanted_messages[] = {
 /* what the shared code expects of an application                           */
 
 const bool use_event_log = true, new_session = true, saved_sessions = true;
+const bool share_can_be_downstream = false;     /* connection sharing: see stubs.c */
+const bool share_can_be_upstream = false;
 const bool dup_check_launchable = true;
 
 const unsigned cmdline_tooltype =

@@ -23,9 +23,6 @@ void platform_ssh_share_cleanup(const char *name)
 {
 }
 
-const bool share_can_be_downstream = false;
-const bool share_can_be_upstream = false;
-
 /*
  * X11 forwarding: there is no X server to forward to.
  */

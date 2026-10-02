@@ -108,6 +108,13 @@ bool ro_entropy_is_weak(void)
     return !have_cryptrandom;
 }
 
+/* For things that need real entropy and not our own jitter, such as a new private key. */
+bool ro_cryptrandom_bytes(void *buf, size_t n)
+{
+    probe();
+    return have_cryptrandom && cryptrandom_bytes(buf, n);
+}
+
 /*
  * The HAL's free-running counter (OS_Hardware 0, HAL routine 21) counts down
  * through each centisecond tick at the rate of the machine's timer (1 or 2 MHz),

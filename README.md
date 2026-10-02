@@ -41,7 +41,15 @@ CryptRandom package with !PackMan (System section; or see
 <http://www.chiark.greenend.org.uk/~theom/riscos/crypto/>). Without it PuTTY warns, once a run, that its random
 numbers come only from timing jitter.
 
-Not done yet: psftp/pscp/puttygen.
+**puttygen** is in `!PuTTY.Tools` (on the Run path once the Filer has seen !PuTTY): it makes keys and converts
+them to and from OpenSSH and ssh.com formats, so keys made elsewhere can be used with PuTTY, which reads only `.ppk`.
+`puttygen -t ed25519 -o MyKey`, `puttygen id_rsa -o MyKey`, `puttygen MyKey -O public-openssh`; see `!Help` for the
+rest. It will not make a key without the CryptRandom module (or `--random-device FILE`).
+
+**psftp** and **pscp** (also in `!PuTTY.Tools`) copy files over SFTP or SCP. Local names are RISC OS ones; the
+names on the far side are converted as files cross (`notes/txt` <-> `notes.txt`, a space is a hard space, characters
+RISC OS cannot have become `_`, and `name,xxx` carries a filetype). A fetched file is typed from that suffix, else
+from its extension, else Text or Data by its content; dates are kept. See `!Help`.
 
 ## Building
 
@@ -51,6 +59,8 @@ only to generate a couple of source files). Same toolchain settings as `riscos-v
 
     make core      # compile the portable PuTTY core (244 files) into build/ro/libputty.a
     make plink     # build/ro/plink,ff8: the console tool (bring-up and testing)
+    make puttygen  # build/ro/puttygen,ff8: the key generator and converter
+    make psftp pscp # build/ro/psftp,ff8 and pscp,ff8: the file transfer tools
     make putty     # build/ro/putty,ff8: the Wimp application
     make app       # build/app/!PuTTY: the application directory
     make dist      # build/PuTTY-<version>.zip, with RISC OS filetypes
@@ -92,12 +102,17 @@ so a stuck test gives up, and `PuTTY$Trace` (a filename) to log socket events.
   `roconnect.c` (Connect box), `rofont.c`, `rodlg.c`/`rodialog.c`/`romenu.c`/`rowimp.c`
   (dialogue, menu and Wimp helpers).
 - `app/!PuTTY/` - the application directory's static files.
+- `patches/` - the few lines changed in upstream files (`cmdgen.patch`, `psftp.patch`, `pscp.patch`), applied at build time.
 - `tests/ro/` - diagnostics run in the emulator: the Resolver SWIs (`dnstest`), the Font Manager, the HAL
-  counter, half-closed connections on the loopback (`halfclose`), and the CryptRandom module (`crtest`).
+  counter, half-closed connections on the loopback (`halfclose`), the CryptRandom module (`crtest`), file types
+  (`ftype`) and what the C library says after a failed file call (`errtest`).
 - `tools/echoserver.py`, `tools/conchserver.py`, `tools/testproxy.py` - test servers: a Telnet/Raw echo
   server, a second SSH implementation (Twisted Conch, with port forwarding), and an HTTP/SOCKS proxy.
 - `tools/cryptomatrix.py` - runs every cipher, MAC, key exchange, key type and compression mode
   through plink in RPCEmu against Uppity (see docs/DESIGN.md).
+- `tools/sftptest.py` - runs psftp and pscp in RPCEmu against Uppity (SFTP and SCP, both directions, names, types, dates).
+- `tools/keytest.py` - runs puttygen in RPCEmu against the host's puttygen and OpenSSH: keys generated,
+  every key format read and written, editing, errors (see docs/DESIGN.md).
 - `tools/` - test server, deploy, sprite and zip tools.
 - `docs/DESIGN.md` - decisions and findings.
 

@@ -71,6 +71,108 @@ is fine; **`Word` is broken in 0.13: every word is one random byte repeated four
 must not use it (build 0.01 did, and would have had a quarter of the entropy it thought). With the module absent,
 loaded, or installed but not loaded (auto-loaded), plink and the GUI behave as described.
 
+## puttygen (`cmdgen.c`)
+
+Upstream's console key generator and converter, built as `build/ro/puttygen,ff8` (`make puttygen`) and shipped as
+`!PuTTY.Tools.puttygen`, which `!Boot` and `!Run` put on the `Run$Path`. It links `cmdgen.c` with the `keygen/`
+library (added to the core's source list: the prime and key generation for RSA, DSA, ECDSA and EdDSA), our
+`console.c` (prompts), `keygen-noise.c`, `noise.c`, `util.c`, `storage.c` and upstream's `stubs/no-timing.c`; it
+needs no sockets or timers, so `net.c` stays out. (`libputty.a` now holds two `dsa.o` and two `rsa.o`, from
+`crypto/` and `keygen/`, as it already held two `telnet.o`; the linker picks members by symbol, so that is fine.)
+
+**One upstream file is patched**, the first: `patches/cmdgen.patch`, applied by the Makefile to a copy in
+`build/gen`, so `upstream/` stays pristine. It changes (1) the scratch file for an in-place edit, which upstream
+names `<key>.tmp` - on RISC OS a dot is a directory separator, so that names a file inside the key - to
+`ro_temp_sibling()`: the canonical pathname (`OS_FSControl 37`, so `@.key` or a path variable ends up in the
+right directory) with a leaf `PgTmpNNN` in the same directory (the rename that follows cannot cross
+filing systems); (2) the `--random-device` help text; (3) one `#include`. `move()` already copes with RISC OS's
+`rename`, which will not replace an existing file (it removes the target and renames again).
+
+**Entropy policy.** A new key is the one thing that must not rest on weak randomness (it lives for years and
+nothing would warn the user), so `get_random_data` (`keygen-noise.c`, replacing the Unix `/dev/urandom` reader)
+takes its bytes only from the CryptRandom module (`ro_cryptrandom_bytes`, which shares `noise.c`'s probe and
+auto-load) or from a file named with `--random-device`; with neither it explains how to install the module and
+stops. Our timing jitter is still mixed into the PRNG (`noise_get_heavy`) as everywhere, but it is not enough to
+be the only source of a private key. Converting or re-encrypting a key needs randomness only for salts, IVs
+and padding, none of them secret, so that works without the module. Not done: gathering entropy from the mouse
+and keyboard, as Windows PuTTYgen does; that belongs in a Wimp front end.
+
+**File types.** The C library makes a file opened `"w"` Text (&FFF) and one opened `"wb"` Data (&FFD)
+(`tests/ro/ftype.c`), and the key code uses `"wb"`. `f_open` now types every file it creates or empties Text,
+straight after `fopen`: setting a type on an open file is allowed and survives the writes and the close. A file
+appended to keeps its type. Key files, public keys, fingerprints and logs are therefore Text.
+
+**Error messages.** After a failed file call the C library leaves `errno` at -1 (or at 0 after `rename` and
+`remove`) and `strerror` says "Unknown Error"; the real message ("File 'x' not found", "'x' is a directory")
+is the operating system's last error (`tests/ro/errtest.c`). `platform.h` redirects `strerror` and `perror` to
+`ro_strerror` and `ro_perror` (`util.c`), which use it. This fixed the messages in `storage.c` and `sshpubk.c`
+as well, and meant rebuilding the whole core.
+
+**Memory.** Saving a key with a passphrase hashes it with Argon2 using 8 MB by default; `riscos_run`'s command
+line has that, and a task window with a small slot may not (the failure is a clean "FATAL ERROR: Out of
+memory", rc 1; `--ppk-param memory=1024` is the cheaper setting). Key generation takes 0-1 s for ed25519, ed448
+and the ECDSA curves, 1-10 s for RSA-1024 and DSA-1024, and 44-138 s for RSA-2048 on RPCEmu (the time is
+random: it is a prime search).
+
+**Verified** (`tools/keytest.py`; 104 checks, all passing, RPCEmu against the host's puttygen and OpenSSH 10.2):
+11 key types generated on the guest, each with and without a passphrase (ed25519, ed448, ECDSA 256/384/521,
+RSA 1024/2048 and with `--primes proven` and `--strong-rsa`, DSA 1024, SSH-1 RSA), every one loading on the host
+with the same fingerprint and component dump, and, where OpenSSH can read the type, OpenSSH deriving the same
+public key from the exported private key; 22 private keys and 3 public-key files in every format the host tools write (OpenSSH PEM and
+new format, with and without passphrases, PuTTY v2 and v3 with each Argon2 flavour, ssh.com, SSH-1, public
+keys in both forms), each read by the guest and compared (fingerprint, `--dump`, converted to PPK and back
+out as OpenSSH old and new format and ssh.com); in-place `-P`, `-C`, `--reencrypt`, with `@.` and bare names, no
+scratch file left; `--ppk-param` (version 2, argon2i with memory and passes, argon2d with parallelism and time);
+passphrases from files and from redirected input; the short forms `-l -L -p`, `-E md5`, `-q` and the progress
+bar; and the error paths with their messages. With the module absent: generation refuses and says why,
+conversion and `--random-device` work, and an installed-but-not-loaded module is loaded. Not yet checked:
+the interactive (keyboard) passphrase prompt, a task window's memory, a real Pi.
+
+## psftp and pscp (`sftp.c`)
+
+Upstream's `psftp.c` and `pscp.c`, built from copies patched at build time (`patches/psftp.patch`, `patches/pscp.patch`:
+six call sites, below), with `src/ro/sftp.c` as the platform layer in place of `unix/sftp.c`. The core lists gained
+`ssh/sftp`, `ssh/sftpcommon` and `psftpcommon`; `psftp.c` and `pscp.c` define `share_can_be_*` themselves, so those two
+constants moved out of `stubs.c` into `plink.c` and `roapp.c`.
+
+**Two kinds of name.** A *local path* is a native RISC OS pathname as the user typed it (a path dragged to a task window
+works). A *leaf* is one name as the remote Unix system has it. PuTTY's generic code only ever joins and splits paths with
+`/`, so the platform layer holds the convention: names from `read_filename` and from the server are leaves, and
+`dir_file_cat` turns a leaf into a local path. The patches cover the places where the generic code crosses between the
+two itself: the default local name for `get` and the default remote name for `put` (`psftp.c`), the name sent by
+`source`/`rsource` and the join in `rsource`, the default target when none is given, and the progress line (`pscp.c`).
+Conversion: `.` and `/` swap, characters RISC OS names cannot hold (`: $ & @ ^ % \ * # " |`, control characters) become
+`_`, and a space becomes the hard space (&A0), because **a space ends a name in a RISC OS call** (`OS_File 5` on
+"space name/txt" looked at "space"; HostFS lists the name with a space and stores U+00A0 on the host). Spaces in
+user-typed local names are converted the same way as they come in.
+
+**File types.** A leaf ending `,xxx` (three hex digits) is a file type, as with NFS, Samba and the FTP clients. Downloads:
+the suffix if there is one; else the extension (a small built-in table: `MimeMap_Translate` answered "No MIME mapping
+found" to everything in the emulator, and its reason codes are poorly documented); else Text or Data from the first
+512 bytes (a NUL or more than 2% control characters means Data). The type is set when the file is closed, together with the
+date, because FileCore stamps a file when it is closed. Uploads: `read_filename` and the default remote name add `,xxx`
+unless the type is Text or Data (`PuTTY$SftpNoTypes` leaves it off). Reading a name that ends `,xxx` falls back to the
+name without it when no such file exists (`resolve_read`). Dates: the five-byte centisecond stamp in load/exec
+(`OS_File 5`) both ways; permissions are not sent (`perms` is -1).
+
+**pscp: local or host:path?** pscp decides by the colon (`colon()`, patched with `ro_looks_local`). A prefix before the
+first colon that is `FileSystem::` is local; one with a `.` or `@` is a host; otherwise `OS_FSControl 37` on `prefix:` decides:
+it succeeds for a path variable (`Choices:`), reports "Filing system X: must be given a filename" for a filing system that
+exists, and "not present" or "not recognised" for anything else. That relies on the English error text. `user@host:` always works.
+
+**Directories and wildcards** use `OS_GBPB 10` (load, exec, length, attributes, object type, name; the buffer must be
+word aligned). Wildcards are RISC OS ones (`*` and `#`) in the last part of the path only. **The loop and the prompt:**
+`ssh_sftp_loop_iteration` is plink's wait (`ro_net_poll`, timers, callbacks) and returns -1 when no sockets are left and no
+lookup is pending; at the prompt the keyboard is polled with `OS_Byte 129` every 5 cs, with echo, Backspace, Ctrl-U,
+Ctrl-D and Up/Down through the last 32 commands; with redirected input lines are read with `fgetc`. `PuTTY$Timeout` gives
+up after N seconds, for tests.
+
+**Verified** (`tools/sftptest.py`, 41 checks pass, RPCEmu against Uppity; Uppity serves SFTP and SCP out of the host's
+real file system): psftp `get`, `put`, `-r`, `mget`, `mput`, `mkdir`, `mv`, `ls`, `lcd`, `lpwd`, `-b` batch files, errors; 14
+file names/types including a 3 MB and a 2 MB file; pscp both ways with SFTP and with `-scp`, `-r`, `-p` (dates kept both
+ways), wildcards, `-ls`, errors; and psftp commands read from redirected input. Not checked: the interactive keyboard
+prompt (needs the VNC password to type), a real Pi, transfers over a slow link, `-restart`.
+
 ## Console tool (`plink.c`)
 
 Based on `unix/plink.c`. With a keyboard stdin the keys are polled with `OS_Byte 129` (INKEY). Redirect
@@ -244,8 +346,15 @@ unit). A screenshot without VNC: `*ScreenSave file`, then `tools/sprite2png.py`.
 - Tracing a Wimp problem: append to a file on HostFS from the code (`fopen("HostFS::HostFS.$.x", "a")`),
   log SWI results, and read the file from the host. That found both of the above in minutes.
 
+- The guest's command channel (`riscos_run`) is one line at a time: a multi-line command wedges it. A test
+  that can reach a passphrase prompt waits for a key press for ever (it cost half an hour once): run such
+  commands with standard input redirected from an empty file, so that the prompt fails and is logged.
+- `{ >> file }` appends only to a file that exists; `Copy` does not overwrite an existing file (`X Delete`
+  first); RISC OS file names are not case sensitive (`sf_l` and `sf_L` were one file); after `Dir x` a
+  relative name in a redirection no longer means what it did.
+
 ## Not done yet
 
-Window position and size memory, psftp/pscp/puttygen, a settled entropy source,
+Window position and size memory, a settled entropy source,
 tests on a real Pi, a colour swatch in the colour chooser, a scrolling category tree (the accordion is enough
 for PuTTY 0.85's panels).

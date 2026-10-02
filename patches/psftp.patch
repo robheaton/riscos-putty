@@ -1,0 +1,28 @@
+--- psftp.c
++++ psftp.c
+@@ -10,6 +10,7 @@
+ 
+ #include "putty.h"
+ #include "psftp.h"
++#include "rosftp.h"
+ #include "storage.h"
+ #include "ssh.h"
+ #include "ssh/sftp.h"
+@@ -1277,7 +1278,7 @@
+             if (!multiple && i < cmd->nwords)
+                 outfname = cmd->words[i++];
+             else
+-                outfname = stripslashes(origwfname, false);
++                outfname = ro_remote_leaf_to_local(stripslashes(origwfname, false));
+ 
+             toret = sftp_get_file(fname, outfname, recurse, restart);
+ 
+@@ -1377,7 +1378,7 @@
+             if (!multiple && i < cmd->nwords)
+                 origoutfname = cmd->words[i++];
+             else
+-                origoutfname = stripslashes(wfname, true);
++                origoutfname = ro_local_path_to_remote_leaf(wfname);
+ 
+             outfname = canonify(origoutfname);
+             toret = sftp_put_file(wfname, outfname, recurse, restart);

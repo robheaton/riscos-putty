@@ -28,6 +28,10 @@
 
 #define MAX_STDIN_BACKLOG 4096
 
+/* Connection sharing is not supported here (see stubs.c); each tool says so for itself. */
+const bool share_can_be_downstream = false;
+const bool share_can_be_upstream = false;
+
 static LogContext *logctx;
 
 void cmdline_error(const char *fmt, ...)

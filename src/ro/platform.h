@@ -21,6 +21,18 @@ struct Filename {
 };
 FILE *f_open(const struct Filename *, char const *, bool);
 
+/*
+ * After a failed file call the C library leaves errno at -1, and strerror() then says
+ * "Unknown Error"; what really went wrong ("File 'x' not found") is the operating system's
+ * last error.  PuTTY reports failures as strerror(errno), so these two (in util.c) stand in
+ * for the library's and use that message.  (The return types match the library's, so it
+ * does not matter whether string.h is included before or after this.)
+ */
+char *ro_strerror(int errnum);
+void ro_perror(const char *prefix);
+#define strerror ro_strerror
+#define perror ro_perror
+
 struct FontSpec {
     char *name;    /* may be "" to indicate no selected font at all */
 };

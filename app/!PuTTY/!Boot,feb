@@ -1,3 +1,7 @@
 | !Boot file for !PuTTY
 Set PuTTY$Dir <Obey$Dir>
 IconSprites <Obey$Dir>.!Sprites
+| the command-line tools (puttygen, psftp, pscp) can then be run by name
+Set PuTTY$Tools <Obey$Dir>.Tools.
+If "<PuTTY$OnPath>" = "" Then Set Run$Path <Run$Path>,<PuTTY$Tools>
+Set PuTTY$OnPath 1

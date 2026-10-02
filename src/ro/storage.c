@@ -30,9 +30,6 @@ enum {
     INDEX_SESSIONDIR, INDEX_SESSION, INDEX_HOSTCADIR, INDEX_HOSTCA
 };
 
-#define FILETYPE_TEXT 0xFFF
-#define FILETYPE_DATA 0xFFD
-
 static const char hex[16] = "0123456789ABCDEF";
 
 static void make_session_filename(const char *in, strbuf *out)

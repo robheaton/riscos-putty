@@ -1,0 +1,30 @@
+--- cmdgen.c
++++ cmdgen.c
+@@ -15,6 +15,7 @@
+ #include "ssh.h"
+ #include "sshkeygen.h"
+ #include "mpint.h"
++#include "ro.h"
+ 
+ static FILE *progress_fp = NULL;
+ static bool linear_progress_phase;
+@@ -149,8 +150,8 @@
+            "        specify file containing old key passphrase\n"
+            "  --new-passphrase file\n"
+            "        specify file containing new key passphrase\n"
+-           "  --random-device device\n"
+-           "        specify device to read entropy from (e.g. /dev/urandom)\n"
++           "  --random-device file\n"
++           "        specify a file of random bytes to use as entropy\n"
+            "  --primes <type>      select prime-generation method:\n"
+            "        probable       conventional probabilistic prime finding\n"
+            "        proven         numbers that have been proven to be prime\n"
+@@ -829,7 +830,7 @@
+         (intype == SSH_KEYTYPE_SSHCOM && outtype == SSHCOM)) {
+         if (!outfile) {
+             outfile = infile;
+-            outfiletmp = dupcat(outfile, ".tmp");
++            outfiletmp = ro_temp_sibling(outfile);
+         }
+ 
+         if (!change_passphrase && !comment && !reencrypt && !certfile &&

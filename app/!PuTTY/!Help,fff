@@ -68,6 +68,77 @@ http://www.chiark.greenend.org.uk/~theom/riscos/crypto/ ) and start PuTTY again.
 Without the module PuTTY still works but its keys are weaker than they should be (set
 the system variable PuTTY$NoEntropyWarning to silence the box).
 
+Command-line tools
+------------------
+The Tools directory inside !PuTTY holds command-line programs: puttygen, psftp and pscp.
+Once the Filer has seen !PuTTY (or you have run it) they can be run by name from a task
+window or the command line (F12).  Options such as -i keyfile, -l user, -P port, -pw
+password and -batch are as in the other PuTTY tools; "psftp -h" and "pscp -h" list them.
+
+psftp and pscp: copying files
+-----------------------------
+psftp and pscp copy files to and from another computer over SSH.  pscp copies in one
+command, like cp:
+
+  pscp pi@host:/home/pi/notes.txt Docs.notes/txt     fetch a file
+  pscp Docs.notes/txt pi@host:/home/pi/              send a file
+  pscp -r pi@host:/home/pi/projects ADFS::HardDisc4.$.Work    a whole directory
+  pscp -p ...    keep the file dates      pscp -ls pi@host:/home/pi    list a directory
+
+psftp is interactive, like an FTP client: "psftp pi@host", then at the psftp> prompt
+ls, cd, pwd, get, put (with -r for directories), mget, mput (wildcards), mkdir, rmdir,
+rm, mv, lcd and lpwd for the local directory, help, quit.  The cursor Up and Down keys
+bring back earlier commands.  "psftp -b file" runs the commands in a file.
+
+Local names are RISC OS ones, as the Filer shows them (drag a file to the task window to
+type its name).  A name before a colon is a filing system or path variable (ADFS::4.$.x,
+Choices:PuTTY.x) and the file is local; anything else with a colon is host:path (write
+user@host: if a host name is short enough to look like a filing system).  The names on
+the other computer are converted as the files cross:
+
+  notes.txt        notes/txt          a dot in a Unix name is a slash here, and back
+  my file.txt      my<hard space>file/txt
+  a:b$c            a_b_c              characters RISC OS names cannot have become _
+  picture,aff      picture (Draw)     ",xxx" at the end of a name is the file's type
+
+A file you fetch gets its type from a ",xxx" suffix on its name if it has one; otherwise
+from its extension if it is a common one (txt, html, png, jpg, gif, pdf, zip, csv, ...);
+otherwise Text or Data according to what is in it.  A file you send gets ",xxx" added to
+its name unless it is Text or Data (set the system variable PuTTY$SftpNoTypes to leave
+that off).  File dates are kept.
+
+puttygen
+--------
+puttygen makes SSH keys and converts them.  PuTTY reads only its own .ppk files, so a
+key made by OpenSSH (ssh-keygen) or ssh.com has to be converted first:
+
+  puttygen -t ed25519 -o MyKey            make a new key (it asks for a passphrase)
+  puttygen id_rsa -o MyKey                convert an OpenSSH private key to PuTTY's form
+  puttygen MyKey -O public-openssh        print the public key, ready to be added to
+                                          ~/.ssh/authorized_keys on the other computer
+  puttygen MyKey -l                       print its fingerprint
+  puttygen MyKey -P                       change the passphrase
+  puttygen MyKey -C "new comment"         change the comment
+  puttygen MyKey -O private-openssh -o id_ed25519   write it out for OpenSSH
+  puttygen --help                         every option
+
+Use RISC OS file names.  A Unix name such as id_rsa.pub arrives on RISC OS as
+id_rsa/pub, and is typed that way.  The files puttygen writes are Text files.  To
+change a key in place, name only the key (puttygen MyKey -P).
+
+It asks for passphrases without showing them.  For scripts, --old-passphrase FILE and
+--new-passphrase FILE read the passphrase from the first line of a text file, and
+answering with just Return saves a key without a passphrase.  ed25519 keys are made at
+once; an RSA key takes a minute or more on a slow machine (-t rsa -b 3072).
+
+A new key needs good random numbers.  puttygen uses the CryptRandom module (see Random
+numbers) and will not make a key without it: it says so and stops.  A file of random
+bytes made on another computer can be used instead: --random-device FILE.
+
+A key saved with a passphrase is scrambled with a deliberately memory-hungry method that
+needs about 10 MB.  If puttygen stops with "Out of memory", give the task window more
+memory, or ask for a cheaper one with --ppk-param memory=1024.
+
 Files
 -----
 Settings, saved sessions and the host keys PuTTY has accepted are kept in the

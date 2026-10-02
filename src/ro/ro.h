@@ -56,10 +56,27 @@ static inline uint32_t ro_time(void)
 #include <stdbool.h>
 bool ro_entropy_is_weak(void);
 
+/* Filetypes the port writes. */
+#define FILETYPE_TEXT 0xFFF
+#define FILETYPE_DATA 0xFFD
+
 /* Set the RISC OS filetype of a file (OS_File 18). */
 static inline void ro_set_filetype(const char *path, int filetype)
 {
     _swix(OS_File, _INR(0, 2), 18, path, filetype);
 }
+
+/*
+ * A name for a scratch file in the same directory as PATH (malloc'd; free it with
+ * sfree).  Upstream's tools write "<name>.tmp" and then rename it over the original,
+ * but a dot is a directory separator here, so that would name a file inside <name>.
+ */
+char *ro_temp_sibling(const char *path);
+
+/*
+ * n bytes from the CryptRandom module; false if it is not there or not working
+ * (see noise.c), in which case nothing useful has been written to buf.
+ */
+bool ro_cryptrandom_bytes(void *buf, size_t n);
 
 #endif /* PUTTY_RO_H */
