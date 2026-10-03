@@ -807,6 +807,16 @@ void dlg_refresh(dlgcontrol *ctrl, dlgparam *dp)
 
 /* ------------------------------------------------------------------------ */
 
+bool roconfig_idle_wanted(void)
+{
+    return cfgwin_colour_open();
+}
+
+void roconfig_idle(void)
+{
+    cfgwin_colour_idle();
+}
+
 void roconfig_open(Conf *conf, bool midsession, int protocol, int protcfginfo,
                    const char *title, RoConfigDone done, void *ctx)
 {

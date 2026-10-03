@@ -34,6 +34,11 @@ void roconfig_end_for(void *ctx);
  * returns 1 if it was one. */
 int roconfig_message(const wmessage *m);
 
+/* The colour chooser shows a swatch of the colour being typed, and the Wimp says nothing as digits
+ * are typed in a field: while it is open the main loop wakes now and then and calls roconfig_idle. */
+bool roconfig_idle_wanted(void);
+void roconfig_idle(void);
+
 /* Window events: each returns 1 if the window is one of ours. */
 int roconfig_event_click(wevent *e);
 int roconfig_event_key(wevent *e);

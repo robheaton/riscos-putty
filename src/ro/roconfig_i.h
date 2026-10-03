@@ -191,6 +191,8 @@ void cfgwin_update_label(dlgparam *dp, Widget *w);
 void cfgwin_set_focus(dlgparam *dp, Widget *w);
 bool cfgwin_is_visible(dlgparam *dp, Widget *w);
 void cfgwin_start_colour(dlgparam *dp, Widget *w, int r, int g, int b);
+bool cfgwin_colour_open(void);
+void cfgwin_colour_idle(void);
 int  cfgwin_message(const wmessage *m);
 
 #endif /* PUTTY_ROCONFIG_I_H */

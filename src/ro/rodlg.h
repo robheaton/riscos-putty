@@ -23,7 +23,9 @@ enum {
     DI_RADIO,           /* radio button (esg = group number, > 0) */
     DI_BOX,             /* a titled frame / separator (no interaction) */
     DI_RLABEL,          /* static text, right-aligned (the label beside a field) */
-    DI_DISPLAY          /* a read-only field: sunken, text centred (as in Program information) */
+    DI_DISPLAY,         /* a read-only field: sunken, text centred (as in Program information) */
+    DI_SWATCH           /* a sunken well filled with a colour, set with dlg_set_swatch(); a dialogue with
+                         * one is redrawn by us (dlg_event_redraw), not by the Wimp */
 };
 
 /* What kind of window a dialogue is. */
@@ -65,6 +67,8 @@ const char *dlg_get_text(dlg *d, int id);
 void        dlg_set_selected(dlg *d, int id, int on);
 int         dlg_get_selected(dlg *d, int id);
 void        dlg_set_shaded(dlg *d, int id, int on);
+/* The colour a DI_SWATCH shows (0 to 255 each), redrawn at once if it changed. */
+void        dlg_set_swatch(dlg *d, int id, int r, int g, int b);
 /* Put the caret in a writable field. */
 void        dlg_focus(dlg *d, int id);
 /* Which button Return and Escape (or the close icon) activate. */
@@ -80,5 +84,6 @@ int dlg_event_click(wevent *e);       /* Mouse_Click */
 int dlg_event_key(wevent *e);         /* Key_Pressed */
 int dlg_event_open(wevent *e);        /* Open_Window_Request */
 int dlg_event_close(wevent *e);       /* Close_Window_Request */
+int dlg_event_redraw(wevent *e);      /* Redraw_Window_Request (only dialogues with a swatch get them) */
 
 #endif /* PUTTY_RODLG_H */

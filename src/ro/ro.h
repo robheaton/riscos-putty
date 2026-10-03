@@ -56,6 +56,13 @@ static inline uint32_t ro_time(void)
 #include <stdbool.h>
 bool ro_entropy_is_weak(void);
 
+/*
+ * Where a session's window was when it was closed (storage.c): the top left of its visible
+ * area in OS units, kept for each host:port so that the next window for it opens there.
+ */
+bool ro_winpos_get(const char *key, int *x, int *y);
+void ro_winpos_put(const char *key, int x, int y);
+
 /* Filetypes the port writes. */
 #define FILETYPE_TEXT 0xFFF
 #define FILETYPE_DATA 0xFFD

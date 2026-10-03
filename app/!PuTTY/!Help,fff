@@ -30,7 +30,8 @@ The Connect box has:
 Settings... opens PuTTY's full configuration dialogue: choose a heading in the list
 on the left (click a heading with a + to see what is under it) and change what you
 need.  Its Open button starts the session.  Dragging a file onto a file box (a key
-file, a log file) fills in its name.
+file, a log file) fills in its name.  In Window > Colours, Modify opens a colour chooser with a swatch of
+the colour the three numbers make.
 
 Click Open to connect.  PuTTY asks you in the terminal window for a password if
 one is needed.  The first time you connect to a computer it shows the host key's
@@ -45,6 +46,10 @@ pastes the clipboard (Ctrl-Insert copies).  Mouse wheel and Shift-Page Up/Down
 scroll back through the output.  A text file dropped on the window is pasted.
 The left Alt key is Meta, as in a Unix terminal (Alt-F sends Escape then F); the right Alt
 key still types the special characters of your keyboard layout.
+
+A new window opens where the last window for the same host was closed (and a second one for the same host
+steps aside from the first).  The scroll bar's thumb shows how much scrollback there really is; it gets
+smaller when the pointer reaches the window's size box, which is when the window is ready to be enlarged.
 
 Menu on the window gives Copy, Paste, Special command (Break, signals, ...),
 Event log (what PuTTY is doing and why a connection failed), Change settings

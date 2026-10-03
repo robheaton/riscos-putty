@@ -812,9 +812,44 @@ static void open_popup(dlgparam *dp, Widget *w)
 /* ------------------------------------------------------------------------ */
 /* the colour chooser and the font chooser                                  */
 
-enum { K_RED = 1, K_GREEN, K_BLUE, K_CANCEL, K_OK };
+enum { K_RED = 1, K_GREEN, K_BLUE, K_CANCEL, K_OK, K_SWATCH };
 static dlg *d_colour;
 static dlgparam *colour_dp;
+static int swatch_rgb[3] = { -1, -1, -1 };      /* what the swatch shows now */
+
+/* The three fields as numbers, 0 to 255 (an empty or wrong field counts as 0). */
+static void colour_fields(int v[3])
+{
+    const int ids[3] = { K_RED, K_GREEN, K_BLUE };
+    int i;
+    for (i = 0; i < 3; i++) {
+        v[i] = atoi(dlg_get_text(d_colour, ids[i]));
+        if (v[i] < 0) v[i] = 0;
+        if (v[i] > 255) v[i] = 255;
+    }
+}
+
+/* Show the colour the fields describe.  The Wimp edits a field without telling us, so this
+ * is called when the chooser opens and now and then while it is open (roconfig_idle). */
+static void colour_update_swatch(void)
+{
+    int v[3];
+    if (!d_colour) return;
+    colour_fields(v);
+    if (v[0] == swatch_rgb[0] && v[1] == swatch_rgb[1] && v[2] == swatch_rgb[2]) return;
+    swatch_rgb[0] = v[0]; swatch_rgb[1] = v[1]; swatch_rgb[2] = v[2];
+    dlg_set_swatch(d_colour, K_SWATCH, v[0], v[1], v[2]);
+}
+
+bool cfgwin_colour_open(void)
+{
+    return d_colour && dlg_is_open(d_colour);
+}
+
+void cfgwin_colour_idle(void)
+{
+    if (cfgwin_colour_open()) colour_update_swatch();
+}
 
 static void colour_click(dlg *d, int id, int buttons, void *ud)
 {
@@ -824,13 +859,9 @@ static void colour_click(dlg *d, int id, int buttons, void *ud)
     for (it = all_dialogs; it && it != dp; it = it->next) ;
     if (id == K_OK && it && it->colour_for) {
         int v[3], i;
-        const int ids[3] = { K_RED, K_GREEN, K_BLUE };
-        for (i = 0; i < 3; i++) {
-            v[i] = atoi(dlg_get_text(d, ids[i]));
-            if (v[i] < 0) v[i] = 0;
-            if (v[i] > 255) v[i] = 255;
+        colour_fields(v);
+        for (i = 0; i < 3; i++)
             it->colour_rgb[i] = v[i];
-        }
         it->colour_ok = true;
         w = it->colour_for;
         it->colour_for = NULL;
@@ -853,10 +884,11 @@ void cfgwin_start_colour(dlgparam *dp, Widget *w, int r, int g, int b)
             { DI_FIELD, K_GREEN, 72, 44, 56, 26, "", 6, 0, "The green part of the colour, 0 to 255." },
             { DI_RLABEL, 0, 8, 78, 60, 22, "Blue:", 0, 0, NULL },
             { DI_FIELD, K_BLUE, 72, 76, 56, 26, "", 6, 0, "The blue part of the colour, 0 to 255." },
-            { DI_BUTTON, K_CANCEL, 8, 116, 66, 28, "Cancel", 0, 0, NULL },
-            { DI_DEFBUTTON, K_OK, 82, 116, 56, 28, "OK", 0, 0, NULL },
+            { DI_SWATCH, K_SWATCH, 142, 12, 64, 90, "", 0, 0, "The colour these numbers make." },
+            { DI_BUTTON, K_CANCEL, 78, 116, 66, 28, "Cancel", 0, 0, NULL },
+            { DI_DEFBUTTON, K_OK, 152, 116, 56, 28, "OK", 0, 0, NULL },
         };
-        d_colour = dlg_new("Colour", 146, 156, items, (int)(sizeof items / sizeof items[0]), colour_click, NULL);
+        d_colour = dlg_new("Colour", 216, 156, items, (int)(sizeof items / sizeof items[0]), colour_click, NULL);
         if (d_colour) dlg_set_keys(d_colour, K_OK, K_CANCEL);
     }
     if (!d_colour) return;
@@ -866,7 +898,9 @@ void cfgwin_start_colour(dlgparam *dp, Widget *w, int r, int g, int b)
     snprintf(buf, sizeof buf, "%d", r); dlg_set_text(d_colour, K_RED, buf);
     snprintf(buf, sizeof buf, "%d", g); dlg_set_text(d_colour, K_GREEN, buf);
     snprintf(buf, sizeof buf, "%d", b); dlg_set_text(d_colour, K_BLUE, buf);
+    swatch_rgb[0] = swatch_rgb[1] = swatch_rgb[2] = -1;        /* force the first update */
     dlg_open(d_colour);
+    colour_update_swatch();
     dlg_focus(d_colour, K_RED);
 }
 

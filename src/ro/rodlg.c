@@ -21,6 +21,9 @@ struct dlg {
     int          buflen[MAX_ITEMS];
     char        *valid[MAX_ITEMS];
     const char  *help[MAX_ITEMS];
+    wbox         box[MAX_ITEMS];      /* the icon's box in the work area, OS units */
+    unsigned     rgb[MAX_ITEMS];      /* DI_SWATCH: the colour, as ColourTrans wants it (&BBGGRR00) */
+    int          own_redraw;          /* has a swatch, so we draw (not the Wimp) */
     const char  *window_help;
     char         title[64];
     int          open;
@@ -90,6 +93,8 @@ static unsigned item_flags(const dlg_item *it)
         return base | IF_RJUSTIFIED | IF_FG(7) | IF_BG(1);
     case DI_DISPLAY:
         return base | IF_BORDER | IF_HCENTRED | IF_FILLED | IF_FG(7) | IF_BG(1);
+    case DI_SWATCH:
+        return base | IF_BORDER | IF_FG(7) | IF_BG(1);          /* not filled: the Wimp would paint it over ours */
     }
     return base;
 }
@@ -105,6 +110,7 @@ static const char *item_validation(const dlg_item *it)
     case DI_RADIO:      return "Sradiooff,radioon";
     case DI_BOX:        return "R2";
     case DI_DISPLAY:    return "R2";
+    case DI_SWATCH:     return "R2";
     default:            return NULL;
     }
 }
@@ -140,6 +146,8 @@ dlg *dlg_new_style(int style, const char *title, int w_px, int h_px, const dlg_i
     d->ud = ud;
     d->default_id = d->escape_id = -1;
     snprintf(d->title, sizeof d->title, "%s", title);
+    for (i = 0; i < n; i++)
+        if (items[i].type == DI_SWATCH) d->own_redraw = 1;
 
     memset(&wd, 0, sizeof wd);
     wd.visible.x0 = 400; wd.visible.y0 = 400;
@@ -148,6 +156,8 @@ dlg *dlg_new_style(int style, const char *title, int w_px, int h_px, const dlg_i
     wd.flags = (style == DLG_MENU)
         ? (WF_AUTO_REDRAW | WF_TITLE_BAR | WF_NEW_FORMAT)
         : (WF_MOVEABLE | WF_AUTO_REDRAW | WF_BACK_ICON | WF_CLOSE_ICON | WF_TITLE_BAR | WF_NEW_FORMAT);
+    if (d->own_redraw)
+        wd.flags &= ~WF_AUTO_REDRAW;               /* we get the redraw requests, the Wimp still draws the icons */
     wd.title_fg = 7; wd.title_bg = 2; wd.work_fg = 7; wd.work_bg = 1;
     wd.scroll_outer = 3; wd.scroll_inner = 1; wd.title_hi = 12;
     wd.extent.x0 = 0; wd.extent.x1 = w; wd.extent.y0 = -h; wd.extent.y1 = 0;
@@ -191,6 +201,7 @@ dlg *dlg_new_style(int style, const char *title, int w_px, int h_px, const dlg_i
         blk.icon.box.x1 = (it->x + it->w) * sx;
         blk.icon.box.y1 = -(it->y * sy);
         blk.icon.box.y0 = -((it->y + it->h) * sy);
+        d->box[i] = blk.icon.box;
         blk.icon.flags = item_flags(it);
         blk.icon.data.ind.buf = d->buf[i];
         blk.icon.data.ind.validation = d->valid[i] ? d->valid[i] : (char *)-1;
@@ -284,6 +295,44 @@ int dlg_is_open(const dlg *d) { return d && d->open; }
 int dlg_window(const dlg *d)  { return d ? d->win : -1; }
 
 /* ------------------------------------------------------------------------ */
+
+void dlg_set_swatch(dlg *d, int id, int r, int g, int b)
+{
+    int i = find_index_by_id(d, id);
+    unsigned rgb;
+    if (i < 0 || d->type[i] != DI_SWATCH) return;
+    if (r < 0) r = 0; if (r > 255) r = 255;
+    if (g < 0) g = 0; if (g > 255) g = 255;
+    if (b < 0) b = 0; if (b > 255) b = 255;
+    rgb = ((unsigned)b << 24) | ((unsigned)g << 16) | ((unsigned)r << 8);
+    if (rgb == d->rgb[i]) return;
+    d->rgb[i] = rgb;
+    if (d->open)
+        _swix(Wimp_ForceRedraw, _INR(0, 4), d->win, d->box[i].x0, d->box[i].y0, d->box[i].x1, d->box[i].y1);
+}
+
+/* The Wimp has drawn the window and its icons for each rectangle that needs it; put the colours in. */
+int dlg_event_redraw(wevent *e)
+{
+    dlg *d = find_dlg(e->words[0]);
+    wdraw *r = (wdraw *)e->words;
+    const int sx = 1 << mode_var(4, 1), sy = 1 << mode_var(5, 1), inset_x = 3 * sx, inset_y = 3 * sy;
+    int more = 0, i;
+
+    if (!d || !d->own_redraw) return 0;
+    if (_swix(Wimp_RedrawWindow, _IN(1) | _OUT(0), r, &more)) return 1;
+    while (more) {
+        const int ox = r->visible.x0 - r->scroll_x, oy = r->visible.y1 - r->scroll_y;
+        for (i = 0; i < d->n; i++) {
+            if (d->type[i] != DI_SWATCH) continue;
+            _swix(ColourTrans_SetGCOL, _IN(0) | _INR(3, 4), d->rgb[i], 0, 0);
+            _swix(OS_Plot, _INR(0, 2), 4, ox + d->box[i].x0 + inset_x, oy + d->box[i].y0 + inset_y);
+            _swix(OS_Plot, _INR(0, 2), 0x65, ox + d->box[i].x1 - inset_x - 1, oy + d->box[i].y1 - inset_y - 1);
+        }
+        if (_swix(Wimp_GetRectangle, _IN(1) | _OUT(0), r, &more)) break;
+    }
+    return 1;
+}
 
 void dlg_set_text(dlg *d, int id, const char *s)
 {

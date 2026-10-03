@@ -27,7 +27,7 @@
 
 enum {
     INDEX_DIR, INDEX_HOSTKEYS, INDEX_HOSTKEYS_TMP, INDEX_RANDSEED,
-    INDEX_SESSIONDIR, INDEX_SESSION, INDEX_HOSTCADIR, INDEX_HOSTCA
+    INDEX_SESSIONDIR, INDEX_SESSION, INDEX_HOSTCADIR, INDEX_HOSTCA, INDEX_WINPOS
 };
 
 static const char hex[16] = "0123456789ABCDEF";
@@ -123,6 +123,12 @@ static char *make_filename(int index, const char *subname)
     if (index == INDEX_RANDSEED) {
         tmp = data_dir();
         ret = dupprintf("%s.RandomSeed", tmp);
+        sfree(tmp);
+        return ret;
+    }
+    if (index == INDEX_WINPOS) {
+        tmp = data_dir();
+        ret = dupprintf("%s.WindowPos", tmp);
         sfree(tmp);
         return ret;
     }
@@ -799,6 +805,98 @@ void write_random_seed(void *data, int len)
 
     fclose(fp);
     ro_set_filetype(fname, FILETYPE_DATA);
+    sfree(fname);
+}
+
+/*
+ * Where each session's window was when it was closed, so that the next one for the same
+ * host and port opens there.  One line per host:port - "host:port", a tab, x, a tab, y (the
+ * window's top left, in OS units) - the most recently used last, at most WINPOS_MAX of them.
+ */
+#define WINPOS_MAX 64
+
+struct winpos {
+    char key[160];
+    int x, y;
+};
+
+static int winpos_load(struct winpos *wp, int max)
+{
+    char *fname = make_filename(INDEX_WINPOS, NULL), *line;
+    FILE *fp = fopen(fname, "r");
+    int n = 0;
+
+    sfree(fname);
+    if (!fp)
+        return 0;
+    while (n < max && (line = fgetline(fp)) != NULL) {
+        char *tab1 = strchr(line, '\t'), *tab2 = tab1 ? strchr(tab1 + 1, '\t') : NULL;
+
+        if (tab2 && (size_t)(tab1 - line) < sizeof wp[n].key) {
+            memcpy(wp[n].key, line, (size_t)(tab1 - line));
+            wp[n].key[tab1 - line] = '\0';
+            wp[n].x = atoi(tab1 + 1);
+            wp[n].y = atoi(tab2 + 1);
+            n++;
+        }
+        sfree(line);
+    }
+    fclose(fp);
+    return n;
+}
+
+bool ro_winpos_get(const char *key, int *x, int *y)
+{
+    struct winpos wp[WINPOS_MAX + 1];
+    int n = winpos_load(wp, WINPOS_MAX + 1), i;
+
+    for (i = n - 1; i >= 0; i--) {
+        if (!strcmp(wp[i].key, key)) {
+            *x = wp[i].x;
+            *y = wp[i].y;
+            return true;
+        }
+    }
+    return false;
+}
+
+void ro_winpos_put(const char *key, int x, int y)
+{
+    struct winpos wp[WINPOS_MAX + 1];
+    int n = winpos_load(wp, WINPOS_MAX + 1), i, j = 0;
+    char *fname, *dir, *errmsg;
+    FILE *fp;
+
+    if (strlen(key) >= sizeof wp[0].key)
+        return;
+    for (i = 0; i < n; i++)                         /* drop the old entry for this host */
+        if (strcmp(wp[i].key, key))
+            wp[j++] = wp[i];
+    n = j;
+    if (n >= WINPOS_MAX) {                          /* and the least recently used if it is full */
+        memmove(wp, wp + (n - WINPOS_MAX + 1), (size_t)(WINPOS_MAX - 1) * sizeof wp[0]);
+        n = WINPOS_MAX - 1;
+    }
+    snprintf(wp[n].key, sizeof wp[n].key, "%s", key);
+    wp[n].x = x;
+    wp[n].y = y;
+    n++;
+
+    dir = make_filename(INDEX_DIR, NULL);
+    errmsg = make_dir_path(dir, 0700);
+    sfree(dir);
+    if (errmsg) {
+        sfree(errmsg);
+        return;
+    }
+    fname = make_filename(INDEX_WINPOS, NULL);
+    fp = fopen(fname, "w");
+    if (fp) {
+        for (i = 0; i < n; i++)
+            fprintf(fp, "%s\t%d\t%d\n", wp[i].key, wp[i].x, wp[i].y);
+        fclose(fp);
+        ro_set_filetype(fname, FILETYPE_TEXT);
+    }
     sfree(fname);
 }
 

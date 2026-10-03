@@ -410,6 +410,7 @@ static void dispatch(int event, wevent *e)
 
     switch (event) {
       case EV_REDRAW:
+        if (dlg_event_redraw(e)) break;
         if ((t = roterm_from_window(e->words[0])) != NULL) roterm_redraw(t, e);
         break;
       case EV_OPEN:
@@ -591,8 +592,9 @@ int main(int argc, char **argv)
     while (!quit_requested) {
         int event = 0;
         uint32_t wake = run_putty(), now = ro_time();
-        unsigned mask = roterm_first() ? 0u : MASK_NULL;
-        if (roterm_first()) {
+        const bool lively = roterm_first() || roconfig_idle_wanted();    /* wants null events */
+        unsigned mask = lively ? 0u : MASK_NULL;
+        if (lively) {
             uint32_t idle = now + IDLE_CS;
             if (!wake || (int32_t)(idle - wake) < 0) wake = idle;
         } else {
@@ -604,6 +606,8 @@ int main(int argc, char **argv)
             continue;
         }
         dispatch(event, (wevent *)event_block);
+        if (roconfig_idle_wanted()) roconfig_idle();
+        roterm_idle();
     }
 
     while (roterm_first()) roterm_free(roterm_first());

@@ -121,10 +121,15 @@ static int extent_w(const RoTerm *t)
     return w > screen_w ? w : screen_w;
 }
 
+/* The scroll bar's thumb is the window's height as a fraction of the work area's, so with a
+ * screen-high work area the thumb looks smaller than it should while the scrollback is short.
+ * So the work area is only that tall while a resize or a maximise may be starting
+ * (wide_extent; see roterm_idle); otherwise it is just the lines there really are. */
 static int extent_h(const RoTerm *t)
 {
     const int total = t->scrollbar && t->sb_total > t->rows ? t->sb_total : t->rows;
     const int h = total * t->font.cell_h;
+    if (t->scrollbar && !t->wide_extent) return h;
     return h > screen_h ? h : screen_h;
 }
 
@@ -650,6 +655,43 @@ static void resize_cells(RoTerm *t, int cols, int rows)
     force_redraw_all(t);
 }
 
+/*
+ * Keep each window's work area the right height for where the pointer is.  The Wimp clamps a
+ * resize drag at the work area and sends no request when it does, so the work area has to be
+ * screen high BEFORE the drag starts: it is made so while the pointer is at the window's size
+ * box or its toggle size icon (with some margin, so that it is ready before the pointer
+ * arrives), and stays so while a button is held after that, which is the drag.  Elsewhere it is
+ * the text there really is, which is what makes the scroll bar's thumb honest.
+ */
+void roterm_idle(void)
+{
+    RoTerm *t;
+    wpointer p;
+    bool have_pointer = false;
+
+    for (t = terms; t; t = t->next) {
+        wstate s;
+        bool near = false, want;
+
+        if (!t->scrollbar || t->win < 0) continue;
+        if (!have_pointer) {
+            if (_swix(Wimp_GetPointerInfo, _IN(1), &p)) return;
+            have_pointer = true;
+        }
+        s.handle = t->win;
+        if (!_swix(Wimp_GetWindowState, _IN(1), &s) && (s.flags & WF_OPEN)) {
+            near = p.x >= s.visible.x1 - 56 && p.x <= s.visible.x1 + 64 &&
+                   ((p.y >= s.visible.y0 - 64 && p.y <= s.visible.y0 + 48) ||      /* the size box */
+                    (p.y >= s.visible.y1 && p.y <= s.visible.y1 + 64));            /* the toggle size icon */
+        }
+        want = near || (t->wide_extent && p.buttons != 0);
+        if (want != t->wide_extent) {
+            t->wide_extent = want;
+            apply_scrollbar(t);
+        }
+    }
+}
+
 void roterm_open(RoTerm *t, wevent *e)
 {
     wstate *s = &e->open;
@@ -679,6 +721,10 @@ void roterm_open(RoTerm *t, wevent *e)
         s->scroll_y = 0;
     }
 
+    if (cols != t->cols || rows != t->rows) {
+        t->wide_extent = true;                      /* (the Wimp has let this through, so it is one) */
+        set_extent(t);
+    }
     t->in_open = true;
     _swix(Wimp_OpenWindow, _IN(1), s);
     t->in_open = false;
@@ -716,16 +762,74 @@ static void bring_to_front(RoTerm *t)
     _swix(Wimp_OpenWindow, _IN(1), &s);
 }
 
+/* The name a window's place is remembered under: its host and port.  False if it has none. */
+static bool window_key(const RoTerm *t, char *buf, size_t n)
+{
+    const char *host;
+    if (!t->conf) return false;
+    host = conf_get_str(t->conf, CONF_host);
+    if (!host || !*host) return false;
+    snprintf(buf, n, "%s:%d", host, conf_get_int(t->conf, CONF_port));
+    return true;
+}
+
+/* Is another terminal window already open with its top left about here? */
+static bool spot_taken(int x0, int y1)
+{
+    const RoTerm *o;
+    wstate s;
+    for (o = terms; o; o = o->next) {
+        if (o->win < 0) continue;
+        s.handle = o->win;
+        if (_swix(Wimp_GetWindowState, _IN(1), &s) || !(s.flags & WF_OPEN)) continue;
+        if (abs(s.visible.x0 - x0) < 24 && abs(s.visible.y1 - y1) < 24) return true;
+    }
+    return false;
+}
+
+/* Keep the title bar reachable on whatever screen this is. */
+static void keep_on_screen(int *x0, int *y1)
+{
+    if (*x0 > screen_w - 160) *x0 = screen_w - 160;
+    if (*x0 < 0) *x0 = 0;
+    if (*y1 > screen_h - 56) *y1 = screen_h - 56;
+    if (*y1 < 160) *y1 = 160;
+}
+
+/* Remember where the window is, for the next one for this host. */
+static void save_position(const RoTerm *t)
+{
+    wstate s;
+    char key[200];
+    if (t->win < 0 || t->is_log || !window_key(t, key, sizeof key)) return;
+    s.handle = t->win;
+    if (_swix(Wimp_GetWindowState, _IN(1), &s)) return;
+    ro_winpos_put(key, s.visible.x0, s.visible.y1);
+}
+
 static int create_window(RoTerm *t)
 {
     wdef w;
-    int handle = -1, k = t->id % 8;
+    int handle = -1, k = t->id % 8, x0 = 64 + 56 * k, y1 = screen_h - 120 - 48 * k;
     const int ww = win_width(t), wh = win_height(t);
+    char key[200];
+    int rx, ry, tries;
+
+    /* Where this host's window was last time, if we know; the next step of the cascade if not.
+     * A second window for the same host would land exactly on the first, so it is stepped aside. */
+    if (window_key(t, key, sizeof key) && ro_winpos_get(key, &rx, &ry)) {
+        x0 = rx; y1 = ry;
+        keep_on_screen(&x0, &y1);
+        for (tries = 0; tries < 8 && spot_taken(x0, y1); tries++) {
+            x0 += 56; y1 -= 48;
+            keep_on_screen(&x0, &y1);
+        }
+    }
 
     memset(&w, 0, sizeof w);
-    w.visible.x0 = 64 + 56 * k;
+    w.visible.x0 = x0;
     w.visible.x1 = w.visible.x0 + ww;
-    w.visible.y1 = screen_h - 120 - 48 * k;
+    w.visible.y1 = y1;
     w.visible.y0 = w.visible.y1 - wh;
     w.behind = -1;
     w.flags = WF_MOVEABLE | WF_BACK_ICON | WF_CLOSE_ICON | WF_TITLE_BAR | WF_TOGGLE_ICON |
@@ -890,6 +994,10 @@ static void set_window_cells(RoTerm *t, int w, int h)
     if (w < WIN_MIN_COLS) w = WIN_MIN_COLS;
     if (h < WIN_MIN_ROWS) h = WIN_MIN_ROWS;
     s.handle = t->win;
+    if (t->win >= 0 && !t->wide_extent) {         /* room to grow; roterm_idle trims it again */
+        t->wide_extent = true;
+        set_extent(t);
+    }
     if (t->win >= 0 && !_swix(Wimp_GetWindowState, _IN(1), &s)) {
         s.visible.x1 = s.visible.x0 + rofont_cx(&t->font, w);
         s.visible.y0 = s.visible.y1 - h * t->font.cell_h;
@@ -1743,6 +1851,7 @@ void roterm_free(RoTerm *t)
     roterm_destroy_connection(t);
     if (t->term) { term_free(t->term); t->term = NULL; }
     if (t->logctx) { log_free(t->logctx); t->logctx = NULL; }
+    save_position(t);
     if (t->win >= 0) _swix(Wimp_DeleteWindow, _IN(1), &t->win);
     if (t->conf) conf_free(t->conf);
     delete_callbacks_for_context(t);

@@ -296,11 +296,24 @@ The terminal window:
 - PuTTY's Terminal draws through `TermWin`. We store what it draws in a grid of cells and paint from
   the grid (in the Wimp redraw loop, and with `Wimp_UpdateWindow` for changed cells), so a redraw is
   always right whatever PuTTY thinks is already on screen.
-- The window's extent is at least as tall as the scrollback (and at least screen sized: the Wimp
-  will not let a window be dragged bigger than its work area, and sends no request when the drag is
-  clamped), but rows are always painted from the top of the visible area; every change of scroll
-  offset is followed by a full redraw because the Wimp copies pixels when it changes. Side effect:
-  while the scrollback is shorter than the screen the scroll bar thumb looks too small.
+- The window's work area is as tall as the scrollback, but rows are always painted from the top of the
+  visible area; every change of scroll offset is followed by a full redraw because the Wimp copies pixels
+  when it changes.
+- **The scroll bar's thumb is honest** (0.07). The thumb is the window's height as a fraction of the
+  work area's, so a screen-high work area made it look too small while the scrollback was short - but the
+  Wimp will not let a window be dragged bigger than its work area, and sends no request when the drag is
+  clamped, so the work area must be screen high BEFORE a resize starts. So `roterm_idle()` (every turn of the
+  main loop) makes it screen high only while the pointer is at the window's size box or toggle size icon
+  (with margin) or a button is held after that (the drag), and otherwise it is exactly the lines there are
+  (`extent_h`, `wide_extent`). Programmatic resizes (Change settings, an Open_Window_Request that changes
+  the size) widen it first. Where the zones are matters: with a vertical scroll bar and no horizontal one
+  the size box is in the scroll bar column at the bottom, level with the last rows of the work area, not
+  below it. Checked in RPCEmu: full-track thumb at rest, shrinks when the pointer reaches the size box,
+  a drag past the old size works, the toggle icon maximises and restores.
+- **Window position memory** (0.07): when a window is closed (or the app quits) its top left is kept in
+  `<Choices$Write>.PuTTY.WindowPos` under `host:port` (64 entries, most recent last: `ro_winpos_put`), and
+  the next window for that host opens there, clamped to the screen and stepped aside (+28 px, -24 px) if
+  another of the task's windows is already there (a duplicate). Without an entry it cascades as before.
 - The palette starts all black: the Terminal reports only entries that differ from black.
 - Box drawing and block elements (U+2500-U+259F) are drawn with rectangles because the fonts have none
   of them; they join up from cell to cell. Everything else is painted with the Font Manager
@@ -336,8 +349,14 @@ the same column flow as the GTK front end (`ctrl_columns` percentages, column st
 implements `dlg_*` on the model. `rocfgwin.c` makes the Wimp icons of the panel on show (and of the
 tree and the Open/Cancel row) and deletes them when another panel is chosen; list boxes are rows of
 icons with scroll arrows, draglists add Up and Down buttons, drop-downs and combos open a pop-up menu,
-the colour chooser (three RGB fields) and font chooser (name, size, a menu of installed fonts) are small
-`rodlg` dialogues, and a file dropped on a file field fills it in. The category tree is an accordion: only
+the colour chooser (three RGB fields and a swatch of the colour they make) and font chooser (name, size, a
+menu of installed fonts) are small `rodlg` dialogues, and a file dropped on a file field fills it in.
+The swatch (`DI_SWATCH`, 0.07) is the one thing in `rodlg` that is not just icons: a dialogue with one is
+not auto-redrawn, so it gets Redraw_Window_Request, lets the Wimp draw its icons, and paints the colours
+over them (`dlg_event_redraw`). The swatch icon must NOT be filled - the Wimp painted a filled icon's
+background over ours and the well stayed white. The Wimp says nothing as digits are typed in a writable
+field, so while the chooser is open the main loop keeps getting null events (`roconfig_idle_wanted`) and
+looks at the fields each time. The category tree is an accordion: only
 the branch leading to the panel on show is open, so it never outgrows the window. One code path serves
 three uses: the full dialogue from the Connect box (Open starts the session), and Change settings on a
 running session (`apply_settings` in `rowindow.c`, after unix/window.c: log, line discipline, terminal,
@@ -375,6 +394,5 @@ unit). A screenshot without VNC: `*ScreenSave file`, then `tools/sprite2png.py`.
 
 ## Not done yet
 
-Window position and size memory, a settled entropy source,
-tests on a real Pi, a colour swatch in the colour chooser, a scrolling category tree (the accordion is enough
-for PuTTY 0.85's panels).
+A settled entropy source, tests on a real Pi, a scrolling category tree (the accordion is enough for
+PuTTY 0.85's panels), a swatch in the Colours panel itself (the chooser you reach with Modify has one).

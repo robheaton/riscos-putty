@@ -64,6 +64,7 @@ struct RoTerm {
     int  sb_total, sb_start, sb_page;   /* the scroll bar, as PuTTY last set it */
     int  scroll_y;                      /* the window's scroll offset to match */
     bool in_open;                       /* inside our own Wimp_OpenWindow: ignore its echo */
+    bool wide_extent;                   /* the work area is screen high (a resize may be starting; see roterm_idle) */
 
     /* The event log.  A session keeps its lines; its Event Log window (shown on
      * request) is itself a terminal with no connection, flagged is_log. */
@@ -98,6 +99,8 @@ RoTerm *roterm_first(void);
 void roterm_redraw(RoTerm *t, wevent *e);
 void roterm_open(RoTerm *t, wevent *e);
 void roterm_close_request(RoTerm *t);
+/* Called every turn of the main loop: sizes each window's work area to suit the pointer. */
+void roterm_idle(void);
 void roterm_key(RoTerm *t, wevent *e);
 void roterm_mouse_click(RoTerm *t, wevent *e);
 void roterm_scroll_request(RoTerm *t, wevent *e);
