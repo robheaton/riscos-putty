@@ -126,7 +126,7 @@ scratch file left; `--ppk-param` (version 2, argon2i with memory and passes, arg
 passphrases from files and from redirected input; the short forms `-l -L -p`, `-E md5`, `-q` and the progress
 bar; and the error paths with their messages. With the module absent: generation refuses and says why,
 conversion and `--random-device` work, and an installed-but-not-loaded module is loaded. Not yet checked:
-the interactive (keyboard) passphrase prompt, a task window's memory, a real Pi.
+a task window's memory, a real Pi (the keyboard prompts are covered by kbtest.py, see below).
 
 ## psftp and pscp (`sftp.c`)
 
@@ -167,11 +167,23 @@ lookup is pending; at the prompt the keyboard is polled with `OS_Byte 129` every
 Ctrl-D and Up/Down through the last 32 commands; with redirected input lines are read with `fgetc`. `PuTTY$Timeout` gives
 up after N seconds, for tests.
 
-**Verified** (`tools/sftptest.py`, 41 checks pass, RPCEmu against Uppity; Uppity serves SFTP and SCP out of the host's
-real file system): psftp `get`, `put`, `-r`, `mget`, `mput`, `mkdir`, `mv`, `ls`, `lcd`, `lpwd`, `-b` batch files, errors; 14
+**The keyboard prompts** (`tools/kbtest.py`, 26 checks pass): typing at the headless emulator needs its VNC
+password, and nothing else gets a key to a program there: `OS_Byte 138` reports success but neither INKEY nor
+`OS_ReadC` ever sees the character (and a program that waits for it hangs the harness for half an hour), and
+`*Exec` does not reach them either. So the tools have a test hook: with `PuTTY$KeyFile` set, `ro_test_key()`
+(util.c) supplies the keystrokes from that file, to the prompt reader in console.c and to psftp's. It exercises
+all of our logic - the line editor (Backspace, Ctrl-U, Ctrl-D, Up/Down history), passphrase and password
+prompts, keyboard-interactive with an echoing and a silent prompt, and every host key question ("not cached":
+y stores it, n connects once, Return abandons; "does not match": Return cancels, y updates the cache) - but not
+the two OS calls underneath, which are as plink has always used them. With `PuTTY$Timeout` set a prompt that
+gets no key within that many seconds counts as Escape (INKEY(20) polling instead of `OS_ReadC`). Note that an
+abort at a password prompt is a clean exit in PuTTY (`ssh_user_close`), so the return code is 0.
+
+**Verified** (`tools/sftptest.py`, 43 checks pass, RPCEmu against Uppity; Uppity serves SFTP and SCP out of the host's
+real file system): psftp `get`, `put`, `-r`, `mget`, `mput`, `reget`, `reput` (restarting a part-done transfer), `mkdir`, `mv`, `ls`, `lcd`, `lpwd`, `-b` batch files, errors; 14
 file names/types including a 3 MB and a 2 MB file; pscp both ways with SFTP and with `-scp`, `-r`, `-p` (dates kept both
-ways), wildcards, `-ls`, errors; and psftp commands read from redirected input. Not checked: the interactive keyboard
-prompt (needs the VNC password to type), a real Pi, transfers over a slow link, `-restart`.
+ways), wildcards, `-ls`, errors; and psftp commands read from redirected input. Not checked: a real Pi, transfers over a
+slow link.
 
 ## Console tool (`plink.c`)
 
@@ -229,7 +241,15 @@ and Telnet's New Line; keyboard-interactive login needed the same). A server tha
 ("Remote side unexpectedly closed network connection") and the window is marked inactive. The name lookup is
 non-blocking (see Networking).
 
-Not yet tested: SSH-1, Rlogin, X11 and agent forwarding (not applicable), SFTP/SCP (not built), a real Pi.
+**Rlogin** (`tools/echoserver.py --rlogin`, plink in RPCEmu, 2026-10-02): the start-up is sent as the protocol wants
+(`\0`, local user, server user `tester` from `-l`, `xterm/38400`, `\0`), the server's `\0` is swallowed, and typed
+data goes to the server and its echo comes back. The client does not wait for the server's acknowledgement before
+sending input, so a server must keep what arrives with the start-up (the test server dropped it at first, which looked
+like plink not sending). Rlogin has no half-close, so plink with its input from a file does not stop when the file ends:
+it waits for the server to close, as upstream does. (The host's own plink cannot be used for comparison: Rlogin needs a
+privileged source port.)
+
+Not yet tested: SSH-1 (no SSH-1 server to test against), X11 and agent forwarding (not applicable), a real Pi.
 
 A **paste** of 2000 lines (10 KB, taken with Copy all from the scrollback and pasted back through `tee`) arrives
 complete and in order.

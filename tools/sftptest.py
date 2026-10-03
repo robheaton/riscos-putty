@@ -8,7 +8,7 @@ HostFS files) and the dates.
 
     tools/sftptest.py setup     make the files on both sides, write the guest scripts and
                                 start Uppity on port 2224 (leave it running; Ctrl-C stops it)
-    (then in RPCEmu:  Obey HostFS::HostFS.$.PuttyDev.sf.run1, run2, run3)
+    (then in RPCEmu:  Obey HostFS::HostFS.$.PuttyDev.sf.run1, run2, run3, run4)
     tools/sftptest.py check     compare what the guest did with what it should have done
 
 Everything the guest sees is in PuttyDev/sf of the emulator's HostFS (the guest sees
@@ -145,7 +145,19 @@ def build_scripts():
         "cd %s" % rin, "lcd %s.down" % GUEST, "mget *.txt", "lcd %s.up" % GUEST,
         "cd %s" % rout, "mput */txt", "ls", "quit", ""]))
 
+    # restarting a transfer: reget finishes a partly fetched file, reput a partly sent one
+    big_in = open(os.path.join(XIN, "big.dat"), "rb").read()
+    big_up = open(os.path.join(SF, "up", "big.dat,ffd"), "rb").read()
+    shutil.rmtree(os.path.join(SF, "down2"), ignore_errors=True)
+    write(os.path.join(SF, "down2", "big.dat,ffd"), big_in[:1048576])
+    shutil.rmtree(os.path.join(XFER, "out2"), ignore_errors=True)
+    write(os.path.join(XFER, "out2", "big.dat"), big_up[:524288])
+    write(os.path.join(SF, "cmds4"), "\n".join([
+        "cd %s" % rin, "lcd %s.down2" % GUEST, "reget big.dat",
+        "cd %s/out2" % XFER, "lcd %s.up" % GUEST, "reput big/dat", "ls", "quit", ""]))
     s1, s2, s3 = Script("run1"), Script("run2"), Script("run3")
+    s4 = Script("run4")
+    s4.run("psftp-restart", "psftp %s -b %s.cmds4 -bc -be 10.10.10.2" % (opts(), GUEST))
     s1.run("psftp-download", "psftp %s -b %s.cmds1 -bc -be 10.10.10.2" % (opts(), GUEST))
     s2.run("psftp-upload", "psftp %s -b %s.cmds2 -bc -be 10.10.10.2" % (opts(), GUEST))
     s3.run("psftp-wildcards", "psftp %s -b %s.cmds3 -bc -be 10.10.10.2" % (opts(), GUEST))
@@ -168,7 +180,7 @@ def build_scripts():
     s3.run("pscp-list", "%s -ls %s%s" % (p, host, rin))
     s3.run("pscp-missing-remote", "%s %s%s/nosuch %s.pdown.nosuch" % (p, host, rin, GUEST))
     s3.run("pscp-missing-local", "%s %s.up.nosuch %s%s/x" % (p, GUEST, host, rout))
-    for s in (s1, s2, s3):
+    for s in (s1, s2, s3, s4):
         s.save()
     # remote directories the pscp uploads need
     os.makedirs(os.path.join(XOUT, "pwild"), exist_ok=True)
@@ -265,6 +277,16 @@ def check_uploads():
         report("mkdir madedir", False, "no directory")
 
 
+def check_restart():
+    print("restarting transfers")
+    got = hostfile(os.path.join(SF, "down2"), "big.dat,ffd")
+    report("reget finishes a partly fetched file", bool(got) and md5(got) == md5(os.path.join(XIN, "big.dat")),
+           "size %s, wanted %s" % (os.path.getsize(got) if got else None, os.path.getsize(os.path.join(XIN, "big.dat"))))
+    sent = os.path.join(XFER, "out2", "big.dat")
+    report("reput finishes a partly sent file", os.path.exists(sent) and md5(sent) == md5(os.path.join(SF, "up", "big.dat,ffd")),
+           "size %s" % (os.path.getsize(sent) if os.path.exists(sent) else None))
+
+
 def check_wildcards():
     print("wildcards")
     down = os.path.join(SF, "down")
@@ -341,6 +363,8 @@ def check():
     check_uploads()
     check_wildcards()
     check_pscp()
+    if "psftp-restart" in cases:
+        check_restart()
     print("log summary:")
     for name, (out, rc) in cases.items():
         first = [l for l in out.split("\n") if l.strip() and not l.strip()[0].isdigit()][:3]

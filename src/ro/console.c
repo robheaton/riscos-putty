@@ -44,6 +44,39 @@ void console_print_error_msg(const char *prefix, const char *msg)
 }
 
 /*
+ * One character from the keyboard: OS_ReadC, which waits for ever - or, if the system
+ * variable PuTTY$Timeout is set (a number of seconds, for tests), a key that does not
+ * come within that time counts as Escape, so that a test script cannot hang on a prompt
+ * nobody will answer.  Returns -1 for Escape (or an error).
+ */
+static int read_char(void)
+{
+    const char *t = getenv("PuTTY$Timeout");
+    int limit = t ? atoi(t) : 0;
+    int k = ro_test_key();
+    uint32_t start;
+
+    if (k != -2)
+        return k;                      /* PuTTY$KeyFile: input from a file (tests) */
+    if (limit <= 0)
+        return _kernel_osrdch();
+    start = ro_time();
+    for (;;) {
+        int key = 0, status = 255;
+
+        /* INKEY(20): wait up to 0.2 s for a key */
+        if (_swix(OS_Byte, _INR(0, 2) | _OUTR(1, 2), 129, 20, 0, &key, &status))
+            return -1;
+        if (status == 0)
+            return key & 255;
+        if (status == 27)
+            return -1;
+        if ((int32_t)(ro_time() - start) > limit * 100)
+            return -1;
+    }
+}
+
+/*
  * Read one line of input.  From the keyboard if stdin is a terminal (with
  * line-editing and, if echo is false, no echo at all); from stdin otherwise.
  * Returns the length of the line, or -1 on end of file or Escape.
@@ -64,7 +97,7 @@ int ro_read_line(char *buf, size_t size, bool echo)
     }
 
     for (;;) {
-        int c = _kernel_osrdch();
+        int c = read_char();
         if (c < 0) {
             buf[n] = '\0';
             return -1;                 /* Escape pressed, or an error */

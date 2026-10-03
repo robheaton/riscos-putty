@@ -770,7 +770,10 @@ static uint32_t test_deadline;         /* ro_time() to give up at, from PuTTY$Ti
 /* OS_Byte 129 with no timeout: the key waiting, or -1. */
 static int read_key(void)
 {
-    int key = 0, status = 255;
+    int key = 0, status = 255, k = ro_test_key();
+
+    if (k != -2)
+        return k;                      /* PuTTY$KeyFile: input from a file (tests) */
 
     if (_swix(OS_Byte, _INR(0, 2) | _OUTR(1, 2), 129, 0, 0, &key, &status))
         return -1;

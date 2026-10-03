@@ -1,13 +1,17 @@
 # PuTTY for RISC OS
 
 A native RISC OS port of the PuTTY SSH/Telnet client (upstream 0.85): a terminal
-window that runs in the desktop, with a Connect box and saved sessions.
+window that runs in the desktop, with a Connect box and saved sessions, and the
+command-line tools plink, puttygen, psftp and pscp.
 
-**Status (2026-10-01): usable, early.** PuTTY's own code (SSH-2 with the hybrid
+**Status (2026-10-02): usable.** PuTTY's own code (SSH-2 with the hybrid
 NTRU Prime / Curve25519 key exchange, ed25519 and the other host and user key types,
 AES, ChaCha20, the terminal emulator) is compiled unchanged; this project adds the
-RISC OS front end. It has been tried in RPCEmu against PuTTY's test server and with
-vim, htop and whiptail. It has not yet been run on a real Pi.
+RISC OS front end and platform layer. The terminal has been run on a real Pi (the Info box
+was the first thing to change); everything else has been tested in RPCEmu against PuTTY's
+test server and a second SSH implementation, with vim, htop and whiptail, and by the
+scripts in `tools/` (see Testing). The command-line tools have not yet been run on a
+real machine.
 
 ## Using it
 
@@ -74,6 +78,13 @@ upstream's `CMakeLists.txt` files. `src/ro/cmake.h` replaces the generated confi
 header. The port's version is in `src/ro/roversion.h`.
 
 ## Testing
+
+The scripts in `tools/` drive the emulator: `cryptomatrix.py` (every cipher, MAC, key exchange
+and key type through plink), `keytest.py` (puttygen against the host's puttygen and OpenSSH),
+`sftptest.py` (psftp and pscp against Uppity) and `kbtest.py` (the keyboard prompts: passphrases,
+host key questions, the psftp command line). The prompts are fed from a file named by the
+system variable `PuTTY$KeyFile` (nothing can be typed at the headless emulator, and a program
+cannot fill its keyboard buffer there); `PuTTY$Timeout` makes a prompt nobody answers end.
 
 Upstream ships a test SSH server, Uppity. Build the native tools once, then:
 

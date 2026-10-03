@@ -186,6 +186,38 @@ char *ro_temp_sibling(const char *path)
     return dupprintf("%.*sPgTmp", (int)dirlen, name);
 }
 
+int ro_test_key(void)
+{
+    static bool loaded, in_use;
+    static unsigned char *data;
+    static size_t len, pos;
+
+    if (!loaded) {
+        const char *name = getenv("PuTTY$KeyFile");
+
+        loaded = true;
+        if (name && *name) {
+            FILE *fp = fopen(name, "rb");
+            size_t cap = 4096, n;
+
+            in_use = true;
+            data = snewn(cap, unsigned char);
+            while (fp && (n = fread(data + len, 1, cap - len, fp)) > 0) {
+                len += n;
+                if (len == cap) {
+                    cap *= 2;
+                    data = sresize(data, cap, unsigned char);
+                }
+            }
+            if (fp)
+                fclose(fp);
+        }
+    }
+    if (!in_use)
+        return -2;
+    return pos < len ? data[pos++] : -1;
+}
+
 bool open_for_write_would_lose_data(const Filename *fn)
 {
     unsigned len = 0;

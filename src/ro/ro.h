@@ -60,6 +60,15 @@ bool ro_entropy_is_weak(void);
 #define FILETYPE_TEXT 0xFFF
 #define FILETYPE_DATA 0xFFD
 
+/*
+ * For tests: if the system variable PuTTY$KeyFile names a file, keyboard input for the
+ * console tools' prompts comes from that file instead of the keyboard (the emulator cannot
+ * be typed at without its VNC password, and the keyboard buffer cannot be filled from a
+ * program there).  Returns the next byte, -1 at the end of the file, or -2 if the variable
+ * is not set and the real keyboard should be read.  See tools/kbtest.py.
+ */
+int ro_test_key(void);
+
 /* Set the RISC OS filetype of a file (OS_File 18). */
 static inline void ro_set_filetype(const char *path, int filetype)
 {
