@@ -30,6 +30,7 @@
 #define PANEL_Y        10
 #define PANEL_W        500
 #define PANEL_H        500
+#define HEAD_H         30           /* a panel's heading, above its first box */
 #define FOOT_Y         524
 #define FOOT_H         50
 

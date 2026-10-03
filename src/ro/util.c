@@ -73,6 +73,30 @@ char filename_char_sanitise(char c)
 
 static int object_type(const char *path, unsigned *length);
 
+void ro_trace(const char *var, const char *fmt, ...)
+{
+    static char started[4][32];
+    const char *name = getenv(var);
+    bool first = true;
+    FILE *fp;
+    va_list ap;
+    int i;
+
+    if (!name || !*name) return;
+    for (i = 0; i < 4; i++) {
+        if (!strcmp(started[i], var)) { first = false; break; }
+        if (!started[i][0]) { snprintf(started[i], sizeof started[i], "%s", var); break; }
+    }
+    fp = fopen(name, first ? "w" : "a");
+    if (!fp) return;
+    fprintf(fp, "%u ", (unsigned)ro_time());
+    va_start(ap, fmt);
+    vfprintf(fp, fmt, ap);
+    va_end(ap);
+    fputc('\n', fp);
+    fclose(fp);
+}
+
 /*
  * Everything PuTTY writes through f_open - logs, key files, exported keys, the text
  * puttygen prints - is text, but the C library makes a file opened "wb" Data (&FFD).

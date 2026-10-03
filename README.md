@@ -1,8 +1,9 @@
 # PuTTY for RISC OS
 
 A native RISC OS port of the PuTTY SSH/Telnet client (upstream 0.85): a terminal
-window that runs in the desktop, with a Connect box and saved sessions, and the
-command-line tools plink, puttygen, psftp and pscp.
+window that runs in the desktop, with a Connect box and saved sessions, a file transfer
+window, a key generator (`!PuTTYgen`), and the command-line tools plink, puttygen, psftp
+and pscp.
 
 **Status (2026-10-02): usable.** PuTTY's own code (SSH-2 with the hybrid
 NTRU Prime / Curve25519 key exchange, ed25519 and the other host and user key types,
@@ -24,7 +25,7 @@ named sessions; Sessions... lists them. Settings... opens PuTTY's full configura
 proxies, tunnels and the rest); its Open button starts the session.
 
 Menu on the icon bar icon gives Info (the standard "About this program" box), Help, New session...,
-Sessions (the saved sessions: choose one to connect at once) and Quit.
+File transfer..., Sessions (the saved sessions: choose one to connect at once), Key generator... and Quit.
 
 In the terminal window: select with the mouse (drag, double-click, triple-click;
 Adjust extends); the selection goes straight to the RISC OS clipboard. Shift-Insert
@@ -44,6 +45,24 @@ Random numbers: good session keys need the **CryptRandom** module. It is normall
 CryptRandom package with !PackMan (System section; or see
 <http://www.chiark.greenend.org.uk/~theom/riscos/crypto/>). Without it PuTTY warns, once a run, that its random
 numbers come only from timing jitter.
+
+**File transfer.** The Connect box's File transfer button (or File transfer... on the icon bar menu) connects to
+the same kind of address, but opens a window like a Filer directory display of the other computer: name, size, date
+and permissions, with the sprite for each file's type. Double-click a directory to go into it (the first row is the
+parent). Drag a file (or several selected ones) to a Filer window, or onto an application's icon or window, and
+it is copied there; double-click a file for a save box; Menu on the window has Copy to... (several files or whole
+directories), Copy to here..., New directory, Rename, Delete, Select all, Parent, Home, Go to and Refresh.
+Drag files from a Filer window onto the window to copy them up (onto a directory's row to put them in it). A
+progress box with a Cancel button shows each copy. Names and filetypes are converted exactly as psftp and pscp do.
+
+**Key generator.** `!PuTTYgen` (next to `!PuTTY`; PuTTY's Key generator... starts it) makes RSA, DSA, ECDSA and
+EdDSA keys with a progress bar and a Cancel button, loads private keys (PuTTY `.ppk`, OpenSSH, ssh.com: drop the file
+on its window or icon), changes a key's comment or passphrase, saves the private key (`.ppk`), the public key, or the
+private key converted for OpenSSH or ssh.com, and copies the public key to the clipboard ready to paste into
+`authorized_keys`. Files are saved by dragging the file icon from the save box to a directory display, or by typing a
+pathname. It needs the CryptRandom module, or else asks you to move the mouse over its window until it has enough
+randomness. It is a separate program because upstream deliberately keeps key generation out of anything that makes
+SSH connections.
 
 **puttygen** is in `!PuTTY.Tools` (on the Run path once the Filer has seen !PuTTY): it makes keys and converts
 them to and from OpenSSH and ssh.com formats, so keys made elsewhere can be used with PuTTY, which reads only `.ppk`.
@@ -99,7 +118,10 @@ keyboard-interactive answers `stoat` and `weasel`. `tools/vncdrive.py` drives th
 emulator's screen, mouse and keyboard over VNC for GUI tests (the VNC password is
 read from `RPCEMU_VNC_PASSWORD`), and `tools/sprite2png.py` turns a `*ScreenSave`
 into a PNG. For the console tool, set the system variable `PuTTY$Timeout` (seconds)
-so a stuck test gives up, and `PuTTY$Trace` (a filename) to log socket events.
+so a stuck test gives up, and `PuTTY$Trace` (a filename) to log socket events. `PuTTYsave$Trace` (a filename)
+logs what the receiver of a dragged file answers (`ro_trace` in `util.c` is the helper for such hooks), and
+`PuTTY$ForceMouseEntropy` makes the key generator ask for mouse movements even when CryptRandom is there.
+`VNC_SLOW=3` in the environment of `vncdrive.py` triples its key and button timings, for a busy host.
 
 ## Layout
 
@@ -111,8 +133,11 @@ so a stuck test gives up, and `PuTTY$Trace` (a filename) to log socket events.
   `rowindow.c` (terminal window: cell grid, painting, keys, mouse), `roseat.c` (how a
   session talks to its user), `roclip.c` (clipboard), `rocontext.c` (window menu),
   `roconnect.c` (Connect box), `rofont.c`, `rodlg.c`/`rodialog.c`/`romenu.c`/`rowimp.c`
-  (dialogue, menu and Wimp helpers).
-- `app/!PuTTY/` - the application directory's static files.
+  (dialogue, menu and Wimp helpers), `rofiles.c`/`roftp.c`/`rofile.c` (the file transfer window, its
+  SFTP connection, and the local file layer shared with psftp and pscp), `rosave.c` (the save box and the
+  drag-to-save protocol), `rogen.c`/`rokeygen.c` (the key generator) and `roinfo.c` (the Info box).
+- `app/!PuTTY/`, `app/!PuTTYgen/` - the application directories' static files (`!PuTTYgen` is built from
+  `rogen.c` and `rokeygen.c`; its sprite is drawn by `tools/mksprites.py`).
 - `patches/` - the few lines changed in upstream files (`cmdgen.patch`, `psftp.patch`, `pscp.patch`), applied at build time.
 - `tests/ro/` - diagnostics run in the emulator: the Resolver SWIs (`dnstest`), the Font Manager, the HAL
   counter, half-closed connections on the loopback (`halfclose`), the CryptRandom module (`crtest`), file types

@@ -1,0 +1,3 @@
+| !Boot file for !PuTTYgen
+Set PuTTYgen$Dir <Obey$Dir>
+IconSprites <Obey$Dir>.!Sprites

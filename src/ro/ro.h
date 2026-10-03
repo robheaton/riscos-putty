@@ -68,6 +68,13 @@ void ro_winpos_put(const char *key, int x, int y);
 #define FILETYPE_DATA 0xFFD
 
 /*
+ * Debug trace: if the system variable `var` names a file, the line is added to it (the file is
+ * started afresh the first time).  The file is closed after each line, so it is complete on disk
+ * even if the program hangs.  Nothing happens if the variable is not set.
+ */
+void ro_trace(const char *var, const char *fmt, ...);
+
+/*
  * For tests: if the system variable PuTTY$KeyFile names a file, keyboard input for the
  * console tools' prompts comes from that file instead of the keyboard (the emulator cannot
  * be typed at without its VNC password, and the keyboard buffer cannot be filled from a

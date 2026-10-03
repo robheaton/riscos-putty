@@ -12,8 +12,10 @@ New session... from its menu) to open the Connect box.  Menu on the icon gives:
   Info          about this program (its version and licence)
   Help...       this file
   New session...  the Connect box
+  File transfer...  the Connect box, for copying files to and from another computer
   Sessions      the sessions you have saved: choose one to connect straight away
-                (Adjust-click keeps the menu open)
+                (Adjust-click keeps the menu open; it is shaded until you have saved one)
+  Key generator...  starts !PuTTYgen, which makes and converts SSH keys
   Quit
 
 The Connect box has:
@@ -62,6 +64,30 @@ the new size and Save in its Session panel keeps it.
 From the command line (for example from an Obey file) PuTTY takes the options of
 the other versions: putty -ssh -P 22 -l user -i keyfile host, or putty -load session.
 
+File transfer
+-------------
+The Connect box has a File transfer button (and File transfer... on the icon bar menu opens the
+same box): fill it in as for a session and click it, and instead of a terminal you get a window like a
+Filer directory display of the other computer, showing each file's name, size, date and permissions.
+
+  Double-click a directory     go into it (the first row, Parent directory, goes back up)
+  Double-click a file          a save box: drag its icon to a directory display, or type a whole pathname
+  Drag a file out of the window   to a Filer directory display, or to an application's icon or window
+                               (dropping a text file on Edit's icon opens it there): the file is copied.
+                               Select several files first (click, then Adjust-click the others) and they
+                               all go
+  Drag files from a Filer window onto this window   copies them up; dropped on a directory's row they go
+                               into that directory; a directory is copied with everything in it
+  Menu  Copy to...             copy the selected files or directories into a directory you name
+        Copy to here...        copy a file or directory (a pathname you type) up to this directory
+        New directory..., Rename..., Delete (asks first; directories go with their contents)
+        Select all, Clear selection, Parent directory, Home directory, Go to..., Refresh
+        Disconnect             close the connection (so does the close icon)
+
+A progress box with a Cancel button shows each copy; Cancel stops it and removes the part-copied file.
+Names and types are converted as for psftp and pscp, below.  Only one file transfer window is open at
+a time.  If the other computer hangs up the title says "disconnected".
+
 Random numbers
 --------------
 PuTTY needs good random numbers to make the keys of an SSH session.  RISC OS has no
@@ -75,7 +101,8 @@ the system variable PuTTY$NoEntropyWarning to silence the box).
 
 Command-line tools
 ------------------
-The Tools directory inside !PuTTY holds command-line programs: puttygen, psftp and pscp.
+The Tools directory inside !PuTTY holds command-line programs: puttygen, psftp and pscp.  (!PuTTYgen is
+a desktop key generator, next to !PuTTY: see its own !Help.)
 Once the Filer has seen !PuTTY (or you have run it) they can be run by name from a task
 window or the command line (F12).  Options such as -i keyfile, -l user, -P port, -pw
 password and -batch are as in the other PuTTY tools; "psftp -h" and "pscp -h" list them.

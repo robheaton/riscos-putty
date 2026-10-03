@@ -178,7 +178,7 @@ $(B)/be_pscp.o: $(U)/be_list.c
 	@echo "  CC  $<  (pscp backends)"
 	$(Q)$(RCC) $(UFLAGS) -DSSH=1 -DSERIAL=0 -DOTHERBACKENDS=0 -DAPPNAME=PSCP -c -o $@ $<
 
-SFTP_O := $(B)/ro/sftp.o $(B)/ro/console.o $(RO_O) $(UXGEN_O) \
+SFTP_O := $(B)/ro/sftp.o $(B)/ro/rofile.o $(B)/ro/console.o $(RO_O) $(UXGEN_O) \
           $(addprefix $(B)/up/,$(addsuffix .o,$(PLINK_STUBS)))
 
 $(B)/psftp,ff8: $(B)/gen/psftp.o $(B)/be_psftp.o $(SFTP_O) $(B)/libputty.a
@@ -190,7 +190,8 @@ $(B)/pscp,ff8: $(B)/gen/pscp.o $(B)/be_pscp.o $(SFTP_O) $(B)/libputty.a
 	$(Q)$(RCC) $(LDFLAGS) -o $@ $(B)/gen/pscp.o $(B)/be_pscp.o $(SFTP_O) -Wl,--start-group $(B)/libputty.a -Wl,--end-group
 
 # ---- the Wimp application ---------------------------------------------------
-GUI_SRC  := roapp rowindow roseat rowimp rofont rodlg rodialog romenu roclip rocontext roconnect roconfig rocfgwin
+GUI_SRC  := roapp rowindow roseat rowimp rofont rodlg rodialog romenu roclip rocontext roconnect roconfig rocfgwin rosave roinfo \
+            rofiles roftp rofile
 GUI_O    := $(addprefix $(B)/ro/,$(addsuffix .o,$(GUI_SRC)))
 GUI_STUBS := stubs/no-agent stubs/no-gss stubs/no-console stubs/no-dit stubs/no-printing
 GUI_O    += $(addprefix $(B)/up/,$(addsuffix .o,$(GUI_STUBS)))
@@ -205,6 +206,20 @@ $(B)/putty,ff8: $(GUI_ALL) $(B)/libputty.a
 	@echo "  LD  $@"
 	$(Q)$(RCC) $(LDFLAGS) -o $@ $(GUI_ALL) -Wl,--start-group $(B)/libputty.a -Wl,--end-group
 
+# ---- the key generator: a Wimp task of its own, !PuTTYgen ---------------------
+# Upstream makes it impossible to link key generation (which uses arithmetic that does not
+# take constant time) into a program that makes SSH connections - both define the symbol
+# deliberate_symbol_clash - so PuTTYgen is a separate program, as it is on other systems.
+# It needs no network or timers: upstream's no-timing stub stands in for them.
+GEN_SRC  := rogen rokeygen rowimp rodlg rodialog romenu rosave roclip roinfo util storage noise unicode compat
+GEN_O    := $(addprefix $(B)/ro/,$(addsuffix .o,$(GEN_SRC))) \
+            $(addprefix $(B)/up/,stubs/no-timing.o unix/utils/cmdline_arg.o unix/utils/fontspec.o \
+              unix/utils/pgp_fingerprints.o)
+
+$(B)/pgen,ff8: $(GEN_O) $(B)/libputty.a
+	@echo "  LD  $@"
+	$(Q)$(RCC) $(LDFLAGS) -o $@ $(GEN_O) -Wl,--start-group $(B)/libputty.a -Wl,--end-group
+
 # ---- diagnostics for the emulator (tests/ro/*.c, each a small stand-alone program) ----
 TEST_SRC := $(wildcard tests/ro/*.c)
 FF8      := ,ff8
@@ -215,13 +230,14 @@ $(B)/%,ff8: tests/ro/%.c
 	@echo "  CC  $<"
 	$(Q)$(RCC) -std=gnu99 -O2 $(CPU) -Wall -o $@ $<
 
-.PHONY: core plink puttygen psftp pscp putty app dist tests clean
+.PHONY: core plink puttygen psftp pscp putty pgen app dist tests clean
 core: $(B)/libputty.a
 plink: $(B)/plink,ff8
 puttygen: $(B)/puttygen,ff8
 psftp: $(B)/psftp,ff8
 pscp: $(B)/pscp,ff8
 putty: $(B)/putty,ff8
+pgen: $(B)/pgen,ff8
 tests: $(TEST_BIN)
 
 # ---- the application directory and the release zip -----------------------------
@@ -231,11 +247,16 @@ VERSION := $(shell sed -n 's/^\#define RO_PORT_VERSION *"\(.*\)"/\1/p' src/ro/ro
 # Files carry their RISC OS filetype as a ",xxx" suffix (understood by HostFS, and
 # turned into the proper zip extra fields by tools/mkzip.py).
 APPDIR := build/app/!PuTTY
+GENDIR := build/app/!PuTTYgen
 # The command-line tools go in !PuTTY.Tools, which !Boot and !Run put on the Run$Path.
-app: $(B)/putty,ff8 $(B)/puttygen,ff8 $(B)/psftp,ff8 $(B)/pscp,ff8
+app: $(B)/putty,ff8 $(B)/pgen,ff8 $(B)/puttygen,ff8 $(B)/psftp,ff8 $(B)/pscp,ff8
 	rm -rf build/app
-	mkdir -p $(APPDIR)/Tools
+	mkdir -p $(APPDIR)/Tools $(GENDIR)
 	cp -r app/'!PuTTY'/. $(APPDIR)/
+	cp -r app/'!PuTTYgen'/. $(GENDIR)/
+	cp $(B)/pgen,ff8 $(GENDIR)/'!RunImage,ff8'
+	python3 tools/mksprites.py $(GENDIR)/'!Sprites,ff9' key
+	sed -i '1s/.*/PuTTYgen for RISC OS $(VERSION)/' $(GENDIR)/'!Help,fff'
 	cp $(B)/putty,ff8 $(APPDIR)/'!RunImage,ff8'
 	cp $(B)/puttygen,ff8 $(APPDIR)/Tools/'puttygen,ff8'
 	cp $(B)/psftp,ff8 $(APPDIR)/Tools/'psftp,ff8'
@@ -246,7 +267,7 @@ app: $(B)/putty,ff8 $(B)/puttygen,ff8 $(B)/psftp,ff8 $(B)/pscp,ff8
 dist: app
 	cp README.md build/ReadMe,fff
 	cp LICENSE build/Licence,fff
-	python3 tools/mkzip.py build/PuTTY-$(VERSION).zip $(APPDIR) build/ReadMe,fff build/Licence,fff
+	python3 tools/mkzip.py build/PuTTY-$(VERSION).zip $(APPDIR) $(GENDIR) build/ReadMe,fff build/Licence,fff
 
 clean:
 	rm -rf build

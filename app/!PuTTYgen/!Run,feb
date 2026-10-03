@@ -1,0 +1,5 @@
+| !Run file for !PuTTYgen
+Set PuTTYgen$Dir <Obey$Dir>
+IconSprites <Obey$Dir>.!Sprites
+WimpSlot -min 10240k -max 16384k
+Run <PuTTYgen$Dir>.!RunImage %*0

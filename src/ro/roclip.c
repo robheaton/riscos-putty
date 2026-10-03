@@ -14,10 +14,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "putty.h"
+#include <wchar.h>
+
 #include "ro.h"
 #include "rowimp.h"
-#include "roterm.h"
 #include "roclip.h"
 
 #define TEXT_TYPE       0xFFF
@@ -29,6 +29,19 @@
 
 static int    my_task;
 static bool   utf8;                    /* the desktop alphabet is UTF-8 */
+
+/* where pasted text can go (the terminals, in PuTTY itself; nowhere in the key generator) */
+static const RoClipPaste *paste_to;
+
+static bool is_target(int win)
+{
+    return paste_to && paste_to->is_target(win);
+}
+
+void roclip_set_paste(const RoClipPaste *p)
+{
+    paste_to = p;
+}
 
 /* the text we copied, and whether we still hold the RISC OS clipboard */
 static uint8_t *own;
@@ -263,13 +276,12 @@ static void ram_fetch(const wmessage *m)
 
 static void paste_into(int win, const uint8_t *raw, size_t n)
 {
-    RoTerm *t = roterm_from_window(win);
     wchar_t *w;
     size_t wn;
-    if (!t || !t->term) return;
+    if (!is_target(win)) return;
     w = to_wide(raw, n, &wn);
     if (!w) return;
-    term_do_paste(t->term, w, wn);
+    paste_to->paste(win, w, wn);
     free(w);
 }
 
@@ -294,7 +306,7 @@ static void accept_save(const wmessage *m, int win)
 {
     int blk[64];
     const int type = m->data[5];
-    if (type != TEXT_TYPE || !roterm_from_window(win)) return;
+    if (type != TEXT_TYPE || !is_target(win)) return;
     memset(blk, 0, sizeof blk);
     blk[0] = 44 + name_words(SCRAP);
     blk[3] = m->my_ref;
@@ -318,7 +330,7 @@ static void accept_load(const wmessage *m, bool ours)
     const int win = ours ? ack_win : m->data[0];
 
     wimp_msg_path(m, path, sizeof path);
-    if (m->data[5] != TEXT_TYPE || !path[0] || !roterm_from_window(win)) return;
+    if (m->data[5] != TEXT_TYPE || !path[0] || !is_target(win)) return;
     load_file(path, ours && !strcmp(path, SCRAP), win);
     ack_task = ack_ref = ack_win = 0;
     wimp_send_load_ack(m, path);
@@ -392,7 +404,7 @@ int roclip_message(const wmessage *m)
         if (ours) {
             ask_ref = 0;
             accept_save(m, ask_win);
-        } else if (roterm_from_window(m->data[0])) {
+        } else if (is_target(m->data[0])) {
             accept_save(m, m->data[0]);
         }
         return 1;
@@ -404,7 +416,7 @@ int roclip_message(const wmessage *m)
 
     case MSG_DATA_LOAD: {
         const bool ours = ack_task == m->sender && ack_ref && m->your_ref == ack_ref;
-        if (ours || roterm_from_window(m->data[0])) accept_load(m, ours);
+        if (ours || is_target(m->data[0])) accept_load(m, ours);
         return 1;
     }
 

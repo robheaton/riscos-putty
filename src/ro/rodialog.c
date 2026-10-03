@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "putty.h"
 #include "rodlg.h"
 #include "rodialog.h"
 
@@ -126,9 +127,96 @@ void ro_msgbox(void *owner, const char *title, const char *text,
     dlg_open(d);
 }
 
+/* ------------------------------------------------------------------------ */
+/* questions with an answer to type                                         */
+
+enum { ID_FIELD = 200, ID_OK, ID_CANCEL };
+
+typedef struct Prompt Prompt;
+struct Prompt {
+    Prompt     *next;
+    void       *owner;
+    dlg        *d;
+    RoPromptFn  cb;
+    void       *ctx;
+};
+
+static Prompt *prompts;
+
+static void unlink_prompt(Prompt *p)
+{
+    Prompt **pp;
+    for (pp = &prompts; *pp; pp = &(*pp)->next)
+        if (*pp == p) { *pp = p->next; break; }
+}
+
+static void prompt_click(dlg *d, int id, int buttons, void *ud)
+{
+    Prompt *p = (Prompt *)ud;
+    RoPromptFn cb = p->cb;
+    void *ctx = p->ctx;
+    char *answer = NULL;
+    (void)buttons;
+
+    if (id == ID_OK) answer = dupstr(dlg_get_text(d, ID_FIELD));
+    unlink_prompt(p);
+    dlg_free(d);                        /* (which clears a password field's text as it frees it) */
+    free(p);
+    if (cb) cb(ctx, answer);
+    if (answer) {
+        smemclr(answer, strlen(answer));
+        sfree(answer);
+    }
+}
+
+void ro_prompt(void *owner, const char *title, const char *text, bool secret, const char *initial,
+               RoPromptFn cb, void *ctx)
+{
+    static char lines[MSG_MAXLINES][MSG_COLS + 4];
+    dlg_item items[MSG_MAXLINES + 3];
+    int n, i, w_px, h_px, fy, by;
+    Prompt *p;
+    dlg *d;
+
+    n = wrap(text ? text : "", lines);
+    w_px = 8 * MSG_COLS + 40;
+    fy = 14 + 22 * n + 8;
+    by = fy + 26 + 16;
+    h_px = by + 30 + 14;
+
+    for (i = 0; i < n; i++) {
+        dlg_item it = { DI_LABEL, 0, 20, 14 + 22 * i, 8 * MSG_COLS, 22, lines[i], 0, 0, NULL };
+        items[i] = it;
+    }
+    {
+        dlg_item f = { secret ? DI_PASSWORD : DI_FIELD, ID_FIELD, 20, fy, w_px - 40, 26,
+                       initial ? initial : "", 256, 0, NULL };
+        dlg_item c = { DI_BUTTON, ID_CANCEL, w_px - 20 - 90 - 10 - 90, by, 90, 30, "Cancel", 0, 0, NULL };
+        dlg_item o = { DI_DEFBUTTON, ID_OK, w_px - 20 - 90, by, 90, 30, "OK", 0, 0, NULL };
+        items[n] = f;
+        items[n + 1] = c;
+        items[n + 2] = o;
+    }
+
+    p = (Prompt *)calloc(1, sizeof *p);
+    if (!p) return;
+    p->owner = owner;
+    p->cb = cb;
+    p->ctx = ctx;
+    d = dlg_new(title, w_px, h_px, items, n + 3, prompt_click, p);
+    if (!d) { free(p); return; }
+    p->d = d;
+    dlg_set_keys(d, ID_OK, ID_CANCEL);
+    p->next = prompts;
+    prompts = p;
+    dlg_open(d);
+    dlg_focus(d, ID_FIELD);
+}
+
 void ro_msgbox_drop_owner(void *owner)
 {
     MsgBox **pp = &boxes;
+    Prompt **qq = &prompts;
     while (*pp) {
         MsgBox *m = *pp;
         if (m->owner == owner) {
@@ -137,6 +225,16 @@ void ro_msgbox_drop_owner(void *owner)
             free(m);
         } else {
             pp = &m->next;
+        }
+    }
+    while (*qq) {
+        Prompt *p = *qq;
+        if (p->owner == owner) {
+            *qq = p->next;
+            dlg_free(p->d);
+            free(p);
+        } else {
+            qq = &p->next;
         }
     }
 }

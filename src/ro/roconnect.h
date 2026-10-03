@@ -9,6 +9,8 @@
 
 /* Open the dialogue (or bring it to the front). */
 void roconnect_open(void);
+/* ... the same dialogue, but for a file transfer window: Return presses its File transfer button. */
+void roconnect_open_files(void);
 
 /* The saved sessions' names, sorted, without "Default Settings" (for the icon bar
  * menu).  Free the list with roconnect_free_names(). */

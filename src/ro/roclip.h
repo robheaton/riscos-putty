@@ -23,6 +23,15 @@
 void roclip_init(int task_handle);
 void roclip_shutdown(void);
 
+/* Where pasted text is delivered.  is_target says whether a window takes pasted text; paste
+ * gives it some (wide characters, LF line ends).  Without this - a program that only copies -
+ * nothing can be pasted. */
+typedef struct {
+    bool (*is_target)(int win);
+    void (*paste)(int win, const wchar_t *text, size_t len);
+} RoClipPaste;
+void roclip_set_paste(const RoClipPaste *p);
+
 /* Handle a Wimp message; returns 1 if it was one of ours. */
 int  roclip_message(const wmessage *m);
 

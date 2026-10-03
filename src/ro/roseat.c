@@ -15,6 +15,7 @@
 #include "ro.h"
 #include "roterm.h"
 #include "rodialog.h"
+#include "roseat.h"
 
 #define SEAT(seat) RoTerm *t = container_of(seat, RoTerm, seat)
 
@@ -190,7 +191,7 @@ static void rs_set_busy_status(Seat *seat, BusyStatus status)
     t->busy = status;
 }
 
-static const SeatDialogPromptDescriptions *rs_prompt_descriptions(Seat *seat)
+const SeatDialogPromptDescriptions *roseat_prompt_descriptions(void)
 {
     static const SeatDialogPromptDescriptions descs = {
         .hk_accept_action = "press \"Accept\"",
@@ -201,6 +202,11 @@ static const SeatDialogPromptDescriptions *rs_prompt_descriptions(Seat *seat)
         .weak_cancel_action = "press \"No\"",
     };
     return &descs;
+}
+
+static const SeatDialogPromptDescriptions *rs_prompt_descriptions(Seat *seat)
+{
+    return roseat_prompt_descriptions();
 }
 
 static bool rs_is_utf8(Seat *seat)
@@ -281,7 +287,7 @@ static char *dialog_text(const SeatDialogText *text, const char **title_out)
 }
 
 typedef struct {
-    RoTerm *t;
+    Seat *seat;
     char *host, *keytype, *keystr;
     int port;
     void (*callback)(void *ctx, SeatPromptResult result);
@@ -293,7 +299,7 @@ static void hostkey_answered(void *vctx, int button)
     HostKeyAsk *a = (HostKeyAsk *)vctx;
     SeatPromptResult r = SPR_USER_ABORT;
     if (button == 0) {                                 /* Accept: remember the key */
-        store_host_key(&a->t->seat, a->host, a->port, a->keytype, a->keystr);
+        store_host_key(a->seat, a->host, a->port, a->keytype, a->keystr);
         r = SPR_OK;
     } else if (button == 1) {                          /* Connect Once */
         r = SPR_OK;
@@ -305,27 +311,34 @@ static void hostkey_answered(void *vctx, int button)
     sfree(a);
 }
 
-static SeatPromptResult rs_confirm_ssh_host_key(
-    Seat *seat, const char *host, int port, const char *keytype, char *keystr,
-    SeatDialogText *text, HelpCtx helpctx,
-    void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
+SeatPromptResult roseat_confirm_host_key(
+    void *owner, Seat *seat, const char *host, int port, const char *keytype, char *keystr,
+    SeatDialogText *text, void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
 {
-    SEAT(seat);
     static const char *const buttons[] = { "Accept", "Connect Once", "Cancel" };
     const char *title;
     char *body = dialog_text(text, &title);
     HostKeyAsk *a = snew(HostKeyAsk);
 
-    a->t = t;
+    a->seat = seat;
     a->host = dupstr(host);
     a->port = port;
     a->keytype = dupstr(keytype);
     a->keystr = dupstr(keystr);
     a->callback = callback;
     a->ctx = ctx;
-    ro_msgbox(t, title ? title : "PuTTY Security Alert", body, buttons, 3, 2, 2, hostkey_answered, a);
+    ro_msgbox(owner, title ? title : "PuTTY Security Alert", body, buttons, 3, 2, 2, hostkey_answered, a);
     sfree(body);
     return SPR_INCOMPLETE;             /* the answer comes later, by the callback */
+}
+
+static SeatPromptResult rs_confirm_ssh_host_key(
+    Seat *seat, const char *host, int port, const char *keytype, char *keystr,
+    SeatDialogText *text, HelpCtx helpctx,
+    void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
+{
+    SEAT(seat);
+    return roseat_confirm_host_key(t, seat, host, port, keytype, keystr, text, callback, ctx);
 }
 
 typedef struct {
@@ -340,17 +353,16 @@ static void yesno_answered(void *vctx, int button)
     sfree(a);
 }
 
-static SeatPromptResult seat_yesno(Seat *seat, SeatDialogText *text,
-                                   void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
+SeatPromptResult roseat_confirm_yesno(void *owner, SeatDialogText *text,
+                                      void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
 {
-    SEAT(seat);
     static const char *const buttons[] = { "Yes", "No" };
     const char *title;
     char *body = dialog_text(text, &title);
     YesNoAsk *a = snew(YesNoAsk);
     a->callback = callback;
     a->ctx = ctx;
-    ro_msgbox(t, title ? title : "PuTTY Security Alert", body, buttons, 2, 1, 1, yesno_answered, a);
+    ro_msgbox(owner, title ? title : "PuTTY Security Alert", body, buttons, 2, 1, 1, yesno_answered, a);
     sfree(body);
     return SPR_INCOMPLETE;
 }
@@ -358,13 +370,15 @@ static SeatPromptResult seat_yesno(Seat *seat, SeatDialogText *text,
 static SeatPromptResult rs_confirm_weak_crypto_primitive(
     Seat *seat, SeatDialogText *text, void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
 {
-    return seat_yesno(seat, text, callback, ctx);
+    SEAT(seat);
+    return roseat_confirm_yesno(t, text, callback, ctx);
 }
 
 static SeatPromptResult rs_confirm_weak_cached_hostkey(
     Seat *seat, SeatDialogText *text, void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
 {
-    return seat_yesno(seat, text, callback, ctx);
+    SEAT(seat);
+    return roseat_confirm_yesno(t, text, callback, ctx);
 }
 
 const SeatVtable roterm_seat_vt = {

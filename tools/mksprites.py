@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Generate the application's sprite file (!Sprites) - no drawing program needed.
+"""Generate the applications' sprite files (!Sprites) - no drawing program needed.
 
-The icon is a small monitor showing a terminal prompt.  It is drawn on a 34 x 34
-pixel grid (68 x 68 OS units in a 90 dpi mode, the usual size for an iconbar /
-Filer icon) plus a 17 x 17 one for the Filer's "small icons" view, in 32 bit
-colour with a 1 bit mask, which every RISC OS since 3.5 (with SpriteExtend) can
-plot in any screen mode.  (The writer is the one from riscos-vncclient.)
+!PuTTY's icon is a small monitor showing a terminal prompt, !PuTTYgen's a golden key.
+Each is drawn on a 34 x 34 pixel grid (68 x 68 OS units in a 90 dpi mode, the usual size
+for an iconbar / Filer icon) plus a 17 x 17 one for the Filer's "small icons" view, in 32
+bit colour with a 1 bit mask, which every RISC OS since 3.5 (with SpriteExtend) can plot
+in any screen mode.  (The writer is the one from riscos-vncclient.)
 
     python3 tools/mksprites.py app/'!PuTTY'/'!Sprites,ff9'
+    python3 tools/mksprites.py app/'!PuTTYgen'/'!Sprites,ff9' key
 """
 import struct
 import sys
@@ -114,6 +115,50 @@ def small():
     return c
 
 
+GOLD = (0xF0, 0xC0, 0x30)
+GOLD_LIGHT = (0xFF, 0xEC, 0x90)
+GOLD_DARK = (0xB8, 0x86, 0x10)
+KEY_EDGE = (0x40, 0x2C, 0x00)
+
+
+def key(size):
+    """A key lying diagonally, bow at the top left and teeth at the bottom right, drawn by
+    working out for every pixel whether it is inside the key (so one description serves
+    both sizes)."""
+    k = size / 34.0
+    c = Canvas(size, size)
+    bow = (10.5 * k, 10.5 * k)
+    inside = [[False] * size for _ in range(size)]
+    root2 = 2 ** 0.5
+    for y in range(size):
+        for x in range(size):
+            px, py = (x + 0.5) / k, (y + 0.5) / k
+            bx, by = px - bow[0] / k, py - bow[1] / k
+            r = (bx * bx + by * by) ** 0.5
+            t = (bx + by) / root2                # along the shaft
+            s = (by - bx) / root2                # across it (positive: towards the bottom left)
+            in_bow = 3.4 < r <= 8.6
+            in_shaft = 6.0 <= t <= 27.0 and abs(s) <= 2.0
+            in_tooth = any(t0 <= t <= t0 + 2.6 and 0 <= s <= 6.2 for t0 in (19.0, 23.8))
+            in_tip = 24.0 <= t <= 27.0 and abs(s) <= 2.0
+            inside[y][x] = in_bow or in_shaft or in_tooth or in_tip
+    for y in range(size):
+        for x in range(size):
+            if not inside[y][x]:
+                continue
+            edge = any(not (0 <= x + dx < size and 0 <= y + dy < size and inside[y + dy][x + dx])
+                       for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+            if edge:
+                col = KEY_EDGE
+            else:
+                up = y > 0 and not inside[y - 1][x] or x > 0 and not inside[y][x - 1]
+                lo = y + 1 < size and not inside[y + 1][x] or x + 1 < size and not inside[y][x + 1]
+                col = GOLD_LIGHT if up else GOLD_DARK if lo else GOLD
+            c.px(x, y, col)
+    # the hole in the bow
+    return c
+
+
 def sprite(name, cv):
     """One sprite: 32bpp image + 1bpp mask, as a byte string."""
     w, h = cv.w, cv.h
@@ -145,8 +190,13 @@ def sprite_file(sprites):
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "!Sprites,ff9"
+    which = sys.argv[2] if len(sys.argv) > 2 else "putty"
+    if which == "key":
+        sprites = [sprite("!puttygen", key(34)), sprite("sm!puttygen", key(17))]
+    else:
+        sprites = [sprite("!putty", large()), sprite("sm!putty", small())]
     with open(out, "wb") as f:
-        f.write(sprite_file([sprite("!putty", large()), sprite("sm!putty", small())]))
+        f.write(sprite_file(sprites))
     print("wrote", out)
 
 

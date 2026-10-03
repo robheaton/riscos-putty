@@ -28,11 +28,15 @@
 #include "rocontext.h"
 #include "roconnect.h"
 #include "roconfig.h"
+#include "rosave.h"
+#include "rofiles.h"
+#include "roinfo.h"
 #include "roversion.h"
 
 #define APP_NAME    "PuTTY"
 #define TASK_MAGIC  0x4B534154
 #define IDLE_CS     2                  /* wake this often while a session is open */
+#define YIELD_CS    2                  /* a long operation gives the desktop a turn this often */
 
 static int  task_handle;
 static bool quit_requested;
@@ -127,6 +131,20 @@ int platform_default_i(const char *name, int def)
     return def;
 }
 
+/* What a terminal does with pasted text. */
+static bool term_is_target(int win)
+{
+    return roterm_from_window(win) != NULL;
+}
+
+static void term_paste(int win, const wchar_t *text, size_t len)
+{
+    RoTerm *t = roterm_from_window(win);
+    if (t && t->term) term_do_paste(t->term, text, len);
+}
+
+static const RoClipPaste term_clip = { term_is_target, term_paste };
+
 static void closedown(void)
 {
     if (task_handle) {
@@ -181,56 +199,13 @@ void roapp_menu_opened(RoMenuHandler handler)
  * The icon bar menu follows the usual RISC OS pattern: Info first (its submenu is the
  * "About this program" window), then Help, the application's own entries, and Quit.
  */
-enum { IB_INFO, IB_HELP, IB_NEW, IB_SESSIONS, IB_QUIT };
+enum { IB_INFO, IB_HELP, IB_NEW, IB_FILES, IB_SESSIONS, IB_KEYGEN, IB_QUIT };
 
 static dlg   *d_info;
 static menu  *sessions_menu;           /* the saved sessions, as the Sessions submenu shows them */
 static char **session_names;
 static int    nsessions;
 static int    menu_x, menu_y;          /* where the icon bar menu was opened (for Adjust) */
-
-/*
- * The standard "About this program" box, laid out as the Toolbox's ProgInfo and the
- * ROM applications show it (Edit, Paint): a title bar and nothing else, a right-aligned
- * label and a sunken read-only field for each of name, purpose, author, port,
- * licence and version.  It is the submenu of the Info item, so the Wimp opens and
- * closes it.  Sizes are in pixels, as measured from !Edit's: 320 wide, rows 30
- * apart, fields 26 high, labels 76 wide.
- */
-enum { I_NAME = 10, I_PURPOSE, I_AUTHOR, I_PORT, I_LICENCE, I_VERSION };
-
-static void build_info(void)
-{
-    static const dlg_item items[] = {
-        { DI_RLABEL,  0,         0,   4, 76, 26, "Name",    0, 0, NULL },
-        { DI_DISPLAY, I_NAME,    77,  4, 238, 26, "",       0, 0, NULL },
-        { DI_RLABEL,  0,         0,  34, 76, 26, "Purpose", 0, 0, NULL },
-        { DI_DISPLAY, I_PURPOSE, 77, 34, 238, 26, "",       0, 0, NULL },
-        { DI_RLABEL,  0,         0,  64, 76, 26, "Author",  0, 0, NULL },
-        { DI_DISPLAY, I_AUTHOR,  77, 64, 238, 26, "",       0, 0, NULL },
-        { DI_RLABEL,  0,         0,  94, 76, 26, "Port",    0, 0, NULL },
-        { DI_DISPLAY, I_PORT,    77, 94, 238, 26, "",       0, 0, NULL },
-        { DI_RLABEL,  0,         0, 124, 76, 26, "Licence", 0, 0, NULL },
-        { DI_DISPLAY, I_LICENCE, 77, 124, 238, 26, "",      0, 0, NULL },
-        { DI_RLABEL,  0,         0, 154, 76, 26, "Version", 0, 0, NULL },
-        { DI_DISPLAY, I_VERSION, 77, 154, 238, 26, "",      0, 0, NULL },
-    };
-    char text[64];
-
-    d_info = dlg_new_style(DLG_MENU, "About this program", 320, 184, items,
-                           (int)(sizeof items / sizeof items[0]), NULL, NULL);
-    if (!d_info) return;
-    dlg_set_text(d_info, I_NAME, "PuTTY");
-    dlg_set_text(d_info, I_PURPOSE, "SSH and Telnet client");
-    dlg_set_text(d_info, I_AUTHOR, "Simon Tatham and others");
-    dlg_set_text(d_info, I_PORT, "Rob Heaton and Claude, 2026");
-    dlg_set_text(d_info, I_LICENCE, "MIT licence");
-    snprintf(text, sizeof text, "%s (%s), PuTTY %.*s", RO_PORT_VERSION, RO_PORT_DATE,
-             (int)strspn(ver + (strncmp(ver, "Release ", 8) ? 0 : 8), "0123456789."),
-             ver + (strncmp(ver, "Release ", 8) ? 0 : 8));
-    dlg_set_text(d_info, I_VERSION, text);
-    dlg_set_help(d_info, "Information about this program: its name, purpose, author, licence and version.");
-}
 
 int roapp_info_window(void)
 {
@@ -239,13 +214,15 @@ int roapp_info_window(void)
 
 static void build_menus(void)
 {
-    build_info();
+    d_info = roinfo_new(APP_NAME, "SSH and Telnet client");
     iconbar_menu = menu_new(APP_NAME);
     menu_add(iconbar_menu, "Info", 0);
     if (d_info) menu_set_window(iconbar_menu, IB_INFO, dlg_window(d_info));
     menu_add(iconbar_menu, "Help...", 0);
     menu_add(iconbar_menu, "New session...", 0);
+    menu_add(iconbar_menu, "File transfer...", 0);
     menu_add(iconbar_menu, "Sessions", 0);
+    menu_add(iconbar_menu, "Key generator...", 0);
     menu_add(iconbar_menu, "Quit", 0);
 }
 
@@ -267,12 +244,42 @@ static void open_help(void)
     }
 }
 
+/*
+ * The key generator is a program of its own, !PuTTYgen, as PuTTYgen is next to PuTTY elsewhere:
+ * upstream deliberately stops key generation code (which uses arithmetic that does not take
+ * constant time) being linked into a program that makes SSH connections.  It is started as if
+ * it had been double-clicked: through the directory the Filer has seen it in, or else the one
+ * beside !PuTTY.
+ */
+static void run_keygen(void)
+{
+    const char *seen = getenv("PuTTYgen$Dir"), *mine = getenv("PuTTY$Dir");
+    char *cmd;
+    _kernel_oserror *e;
+
+    if (seen && *seen)
+        cmd = dupstr("Filer_Run <PuTTYgen$Dir>");
+    else if (mine && *mine)
+        cmd = dupprintf("Filer_Run %s.^.!PuTTYgen", mine);
+    else
+        cmd = dupstr("Filer_Run PuTTYgen:");
+    e = _swix(OS_CLI, _IN(0), cmd);
+    sfree(cmd);
+    if (e) {
+        char *msg = dupprintf("The key generator, !PuTTYgen, could not be started (%s).\n"
+                              "Keep it in the same directory as !PuTTY.", e->errmess);
+        ro_notice(NULL, "PuTTY", msg);
+        sfree(msg);
+    }
+}
+
 static int live_sessions(void)
 {
     RoTerm *t;
     int n = 0;
     for (t = roterm_first(); t; t = t->next)
         if (roterm_is_live(t)) n++;
+    if (rofiles_live()) n++;                          /* a file transfer connection counts as a session */
     return n;
 }
 
@@ -345,9 +352,15 @@ static void iconbar_selection(const int *sel)
       case IB_NEW:
         roapp_connect_dialog();
         break;
+      case IB_FILES:
+        if (!rofiles_raise()) roconnect_open_files();       /* (only one file window at a time) */
+        break;
       case IB_SESSIONS:
         if (sel[1] >= 0 && sel[1] < nsessions)
             roconnect_start_session(session_names[sel[1]]);
+        break;
+      case IB_KEYGEN:
+        run_keygen();
         break;
       case IB_QUIT:
         request_quit();
@@ -374,6 +387,7 @@ static const char *help_for(int win, int icon)
 {
     const char *text = dlg_help_text(win, icon);
     if (text) return text;
+    if ((text = rofiles_help(win, icon)) != NULL) return text;
     if (win == -2)
         return "PuTTY. Click to open the Connect box and start a session. "
                "Menu gives the PuTTY menu.";
@@ -382,23 +396,6 @@ static const char *help_for(int win, int icon)
                "Select-drag selects text and copies it; Shift-Insert pastes it. "
                "Menu gives Copy, Paste, Special command, Event log, Change settings and more.";
     return NULL;
-}
-
-/* Message_HelpRequest: answer with the text for the window and icon under the pointer. */
-static void reply_help(const wmessage *m)
-{
-    const char *text = help_for(m->data[3], m->data[4]);
-    int blk[64];
-    size_t n;
-    if (!text) return;
-    memset(blk, 0, sizeof blk);
-    n = strlen(text);
-    if (n > 235) n = 235;
-    memcpy((char *)&blk[5], text, n);
-    blk[0] = 20 + (int)((n + 4) & ~(size_t)3);
-    blk[3] = m->my_ref;
-    blk[4] = MSG_HELP_REPLY;
-    _swix(Wimp_SendMessage, _INR(0, 2), 17, blk, m->sender);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -410,30 +407,33 @@ static void dispatch(int event, wevent *e)
 
     switch (event) {
       case EV_REDRAW:
-        if (dlg_event_redraw(e)) break;
+        if (dlg_event_redraw(e) || roconfig_event_redraw(e) || rofiles_event_redraw(e)) break;
         if ((t = roterm_from_window(e->words[0])) != NULL) roterm_redraw(t, e);
         break;
       case EV_OPEN:
-        if (dlg_event_open(e) || roconfig_event_open(e)) break;
+        if (dlg_event_open(e) || roconfig_event_open(e) || rofiles_event_open(e)) break;
         if ((t = roterm_from_window(e->words[0])) != NULL) roterm_open(t, e);
         else _swix(Wimp_OpenWindow, _IN(1), e);
         break;
       case EV_CLOSE:
-        if (dlg_event_close(e) || roconfig_event_close(e)) break;
+        if (dlg_event_close(e) || roconfig_event_close(e) || rofiles_event_close(e)) break;
         if ((t = roterm_from_window(e->words[0])) != NULL) roterm_close_request(t);
         break;
+      case EV_DRAG_END:
+        rosave_drag_end(e);
+        break;
       case EV_MOUSE_CLICK:
-        if (dlg_event_click(e) || roconfig_event_click(e)) break;
+        if (dlg_event_click(e) || roconfig_event_click(e) || rofiles_event_click(e)) break;
         if (e->mouse.window == -2) { iconbar_click(e); break; }
         if ((t = roterm_from_window(e->mouse.window)) != NULL) roterm_mouse_click(t, e);
         break;
       case EV_KEY:
-        if (dlg_event_key(e) || roconfig_event_key(e)) break;
+        if (dlg_event_key(e) || roconfig_event_key(e) || rofiles_event_key(e)) break;
         if ((t = roterm_from_window(e->key.window)) != NULL) roterm_key(t, e);
         else _swix(Wimp_ProcessKey, _IN(0), e->key.key);
         break;
       case EV_SCROLL:
-        if (roconfig_event_scroll(e)) break;
+        if (roconfig_event_scroll(e) || rofiles_event_scroll(e)) break;
         if ((t = roterm_from_window(e->words[0])) != NULL) roterm_scroll_request(t, e);
         break;
       case EV_GAIN_CARET:
@@ -445,9 +445,14 @@ static void dispatch(int event, wevent *e)
       case EV_MENU:
         if (menu_handler) menu_handler(e->words);
         break;
+      case EV_MESSAGE_ACK:
+        rosave_bounced(&e->msg);                 /* a message of ours that nobody answered */
+        break;
       case EV_MESSAGE:
       case EV_MESSAGE_RECORDED:
-        if (roconnect_message(&e->msg) || roconfig_message(&e->msg) || roclip_message(&e->msg)) break;
+        if (rosave_message(&e->msg) || rofiles_message(&e->msg) || roconnect_message(&e->msg) ||
+            roconfig_message(&e->msg) || roclip_message(&e->msg))
+            break;
         switch (e->msg.action) {
           case MSG_QUIT:
             quit_requested = true;
@@ -462,7 +467,7 @@ static void dispatch(int event, wevent *e)
             }
             break;
           case MSG_HELP_REQUEST:
-            reply_help(&e->msg);
+            wimp_help_reply(&e->msg, help_for(e->msg.data[3], e->msg.data[4]));
             break;
           case MSG_SHUTDOWN:
             break;
@@ -480,23 +485,114 @@ static void dispatch(int event, wevent *e)
 }
 
 /* Run what PuTTY has pending.  Returns the earliest time (centiseconds, ro_time
- * scale) it wants to be called again, or 0 for "no particular time". */
-static uint32_t run_putty(void)
+ * scale) it wants to be called again, or 0 for "no particular time".  *active is
+ * set if there was network traffic or a callback to run, so there may be more. */
+static uint32_t run_putty(bool *active)
 {
     unsigned long now, next;
     uint32_t wake = 0;
     RoTerm *t;
 
-    ro_net_poll(0);
+    *active = ro_net_poll(0) > 0;
     now = GETTICKCOUNT();
     if (run_timers(now, &next)) {
         long ticks = (long)(next - now);
         wake = ro_time() + (ticks <= 0 ? 0 : (uint32_t)(ticks / 10) + 1);
     }
-    run_toplevel_callbacks();
+    if (run_toplevel_callbacks()) *active = true;
     for (t = roterm_first(); t; t = t->next) roterm_poll(t);
     if (toplevel_callback_pending()) wake = ro_time();
     return wake;
+}
+
+/*
+ * One trip round the poll loop: run what PuTTY has pending, give the Wimp a turn and deal with
+ * what it reports, then do the windows' idle jobs.  Returns the event the Wimp reported.  The mode
+ * is how long the Wimp may sleep: POLL_NORMAL for the main loop; POLL_NOWAIT for a long operation
+ * giving the desktop a moment (the Wimp must come back at once, with a null event if it has nothing
+ * else); POLL_SHORT for one waiting for the network (two centiseconds, or none if the network just
+ * had something to say).  (The event block is local because a nested poll must not overwrite the one
+ * an outer dispatch is still using.)
+ */
+enum { POLL_NORMAL, POLL_NOWAIT, POLL_SHORT };
+
+static int poll_once(int mode)
+{
+    int block[64];
+    int event = 0;
+    bool active;
+    uint32_t wake = run_putty(&active), now = ro_time();
+    const bool lively = mode != POLL_NORMAL || roterm_first() || roconfig_idle_wanted() || rofiles_idle_wanted();
+    unsigned mask = lively ? 0u : MASK_NULL;                    /* lively: wants null events */
+    _kernel_oserror *e;
+
+    if (mode == POLL_NOWAIT || (mode == POLL_SHORT && active)) {
+        wake = now;
+    } else if (mode == POLL_SHORT) {
+        wake = now + 2;
+    } else if (lively) {
+        uint32_t idle = now + IDLE_CS;
+        if (!wake || (int32_t)(idle - wake) < 0) wake = idle;
+    } else {
+        wake = now + 6000;
+    }
+    e = _swix(Wimp_PollIdle, _INR(0, 3) | _OUT(0), mask, block, (int)wake, 0, &event);
+    if (e) {
+        wimp_error_os(e);
+        return EV_NULL;
+    }
+    dispatch(event, (wevent *)block);
+    if (roconfig_idle_wanted()) roconfig_idle();
+    roterm_idle();
+    rofiles_idle();
+    return event;
+}
+
+/*
+ * Long operations - making a key, a file transfer - are ordinary function calls that cannot
+ * return until they are done, so they call this every so often to let the rest of the desktop
+ * (and PuTTY's sessions) carry on.  Only one runs at a time, and an operation is not
+ * interrupted by another's yielding.
+ */
+static bool op_running;
+static int  yield_depth;
+
+bool roapp_op_begin(void)
+{
+    if (op_running) return false;
+    op_running = true;
+    return true;
+}
+
+void roapp_op_end(void)
+{
+    op_running = false;
+}
+
+/* Wait (up to a couple of centiseconds) for the network, keeping the desktop going. */
+bool roapp_wait(void)
+{
+    poll_once(POLL_SHORT);
+    return !quit_requested;
+}
+
+bool roapp_yield(void)
+{
+    static uint32_t last;
+    const uint32_t now = ro_time();
+
+    if (yield_depth == 0 && (int32_t)(now - last) >= YIELD_CS) {
+        int n;
+        yield_depth++;
+        /* The Wimp returns one event per poll, and redraw requests (which a progress display
+         * makes before every yield) ahead of mouse clicks: so poll until it has nothing more to
+         * say (a null event), or the mouse would never get a turn. */
+        for (n = 0; n < 16; n++)
+            if (poll_once(POLL_NOWAIT) == EV_NULL) break;
+        yield_depth--;
+        last = ro_time();
+    }
+    return quit_requested;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -563,7 +659,6 @@ static bool start_from_command_line(int argc, char **argv)
 
 int main(int argc, char **argv)
 {
-    static int event_block[64];
     _kernel_oserror *e;
 
     e = _swix(Wimp_Initialise, _INR(0, 3) | _OUT(1), 310, TASK_MAGIC, APP_NAME,
@@ -576,6 +671,7 @@ int main(int argc, char **argv)
     settings_set_default_protocol(be_default_protocol);
     settings_set_default_port(22);
     roclip_init(task_handle);
+    roclip_set_paste(&term_clip);
     sk_init();
     uxsel_init();
     build_menus();
@@ -589,27 +685,10 @@ int main(int argc, char **argv)
     start_from_command_line(argc, argv);
     if (!roterm_first()) roapp_connect_dialog();       /* nothing to connect to yet: ask */
 
-    while (!quit_requested) {
-        int event = 0;
-        uint32_t wake = run_putty(), now = ro_time();
-        const bool lively = roterm_first() || roconfig_idle_wanted();    /* wants null events */
-        unsigned mask = lively ? 0u : MASK_NULL;
-        if (lively) {
-            uint32_t idle = now + IDLE_CS;
-            if (!wake || (int32_t)(idle - wake) < 0) wake = idle;
-        } else {
-            wake = now + 6000;
-        }
-        e = _swix(Wimp_PollIdle, _INR(0, 3) | _OUT(0), mask, event_block, (int)wake, 0, &event);
-        if (e) {
-            wimp_error_os(e);
-            continue;
-        }
-        dispatch(event, (wevent *)event_block);
-        if (roconfig_idle_wanted()) roconfig_idle();
-        roterm_idle();
-    }
+    while (!quit_requested)
+        poll_once(POLL_NORMAL);
 
+    rofiles_shutdown();
     while (roterm_first()) roterm_free(roterm_first());
     cleanup_exit(0);
     return 0;

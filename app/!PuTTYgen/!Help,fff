@@ -1,0 +1,72 @@
+PuTTYgen for RISC OS
+
+PuTTYgen makes the keys that let you log in to a computer with SSH without typing a
+password: a key pair, which is a private key (which stays with you, locked with a
+passphrase) and a public key (which you put on the computer you log in to).  This is a
+RISC OS port of PuTTYgen from PuTTY 0.85 by Simon Tatham and others.
+
+Starting
+--------
+Double-click !PuTTYgen to put its icon on the icon bar and open its window.  (PuTTY's
+icon bar menu has Key generator..., which does the same.)  Click on the icon to open the
+window again.  Menu on the icon gives Info, Help, Key generator... and Quit.  You can drop a
+key file on the icon to load it.
+
+Making a key
+------------
+1. Choose the kind of key.  RSA works everywhere; Ed25519 (EdDSA, 255 bits) is short and fast but
+   needs a reasonably recent server; ECDSA is in between.  DSA is old and best avoided.
+2. Choose the size: for RSA 2048 is fine (3072 or 4096 if you want more margin), for ECDSA 256,
+   384 or 521, for EdDSA 255 (Ed25519) or 448 (Ed448).
+3. Click Generate.  The bar shows how far it has got; Cancel stops it.  A big RSA key can take a
+   while on a slow computer - a minute or more for 4096 bits on an old machine.
+4. Type a comment if you like (a note to tell this key from others), and a passphrase twice.
+   The passphrase locks the private key; without one anyone who gets the file can use it.
+5. Click Save private key and save the .ppk file somewhere safe: drag the file icon to a
+   directory display, or type the whole pathname and click Save.
+6. Click Copy public key to put the public key on the clipboard, and paste it into the file
+   ~/.ssh/authorized_keys on the computer you want to log in to - or click Save public key
+   to save it as a file.
+
+To use the key in PuTTY, give its .ppk file in the Key file box of the Connect box (or drag
+the file onto that box).
+
+Randomness
+----------
+A key is only as good as the random numbers it is made from.  PuTTYgen takes them from the
+CryptRandom module, which PuTTY loads from !System if it is there (get it with !PackMan).
+Without it PuTTYgen asks you to move the mouse over its window until the bar has filled, and
+uses the movements, as PuTTYgen does on other systems.
+
+Loading a key
+-------------
+Drop a key file on the window (or click Load... and type its pathname) to look at it again,
+to change its comment or passphrase and save it, or to convert it.  PuTTY's own .ppk files
+load, and so do the keys made by OpenSSH (ssh-keygen) and ssh.com.  If the key is locked,
+PuTTYgen asks for its passphrase.
+
+The window's menu (click Menu anywhere in it)
+---------------------------------------------
+  Load key...          the same as the Load button
+  Save public key      the public key as a file, in OpenSSH's one-line format
+  Save private key     the private key as a PuTTY .ppk file
+  Copy public key      the public key on the clipboard
+  Export               save the private key in another program's format:
+                         OpenSSH key           (for OpenSSH's ssh and ssh-agent)
+                         OpenSSH (new format)  (always the newer OpenSSH file format)
+                         ssh.com key
+                         Public key (RFC 4716) the public key in the format ssh.com
+                                               servers and ssh-keygen -i read
+  Fingerprint          show the fingerprint as SHA256 (the default) or MD5
+
+The fingerprint is a short summary of the public key: if two copies show the same one, they
+are the same key.
+
+Filetypes
+---------
+Key files are saved as Text (&FFF).  Take care of your private key: anyone who has the file
+and the passphrase (or the file alone, if you gave no passphrase) can log in as you.
+
+Licence
+-------
+MIT, like PuTTY itself; see the Licence file.

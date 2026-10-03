@@ -60,8 +60,15 @@ timer tick. **Whether or not the module is there** we also mix in our own timing
 of a second at start-up), the time of every key and network event to the same accuracy, system state, and PuTTY's
 own seed file. Without the module that is WEAK (perhaps a hundred bits, and an attacker who knew roughly when a
 session started could search for them), so `ro_entropy_is_weak()` says so and both front ends warn (a box, once a
-run, in the GUI; always in the event log; set `PuTTY$NoEntropyWarning` to silence the box). Not done: reading the
-Pi's hardware RNG registers (the base address differs between models and user mode cannot reach it).
+run, in the GUI; always in the event log; set `PuTTY$NoEntropyWarning` to silence the box). **Decision (2026-10-03): this is the design.** Strong randomness comes from CryptRandom, which is
+in every standard RISC OS 5 `!System`; our own jitter, the key and network event times and PuTTY's seed
+file are always mixed in as well; without the module the tools say so, and a new private key is never made
+from the weaker sources alone (puttygen stops; the Wimp key generator makes the user supply mouse
+movement). The Raspberry Pi's hardware generator is deliberately not used: its registers sit at an
+address that differs between models (and RISC OS versions), reaching them needs a physical-memory
+mapping from a program that cannot check what machine it is on, a wrong guess can hang the computer, and
+nothing in this port can test it. If RISC OS ever gains an entropy SWI, `ro_cryptrandom_bytes()` is the
+one place to add it.
 
 **Tested** (`tests/ro/crtest.c`, RISC OS 5.30 in RPCEmu, both the stock module and the PackMan one): the SWI
 numbers are Byte 0x51980, Stir 0x51981, AddNoise 0x51982, Block 0x51983, Word 0x51984 (from the module's own SWI
@@ -356,7 +363,11 @@ not auto-redrawn, so it gets Redraw_Window_Request, lets the Wimp draw its icons
 over them (`dlg_event_redraw`). The swatch icon must NOT be filled - the Wimp painted a filled icon's
 background over ours and the well stayed white. The Wimp says nothing as digits are typed in a writable
 field, so while the chooser is open the main loop keeps getting null events (`roconfig_idle_wanted`) and
-looks at the fields each time. The category tree is an accordion: only
+looks at the fields each time.
+The Colours panel of the main dialogue has a swatch too (0.08): `cfgwin_create` no longer makes the window
+auto-redraw, `roconfig_event_redraw` lets the Wimp draw the icons and paints the selected colour in a sunken
+well (a decor icon) beside the Modify button, found by the labels PuTTY gives its controls (Red, Green, Blue,
+Modify) in the panel "Window/Colours"; `cfgwin_update_widget` repaints it when PuTTY changes the numbers. The category tree is an accordion: only
 the branch leading to the panel on show is open, so it never outgrows the window. One code path serves
 three uses: the full dialogue from the Connect box (Open starts the session), and Change settings on a
 running session (`apply_settings` in `rowindow.c`, after unix/window.c: log, line discipline, terminal,
@@ -392,7 +403,124 @@ unit). A screenshot without VNC: `*ScreenSave file`, then `tools/sprite2png.py`.
   first); RISC OS file names are not case sensitive (`sf_l` and `sf_L` were one file); after `Dir x` a
   relative name in a redirection no longer means what it did.
 
+## The key generator (`!PuTTYgen`)
+
+A separate Wimp task (`rogen.c` is its `main`, `rokeygen.c` the window, `Makefile` target `pgen`; the application
+directory `app/!PuTTYgen`, whose icon is a golden key drawn by `tools/mksprites.py key`). It has to be separate:
+upstream defines the symbol `deliberate_symbol_clash` in both `keygen/mpunsafe.c` and `ssh/kex2-client.c`, so that the
+non-constant-time arithmetic of key generation can never be linked into a program that makes SSH connections - and the
+terminal application is one. (The same libputty.a serves both; the link is what differs.) PuTTY's icon bar menu has
+Key generator..., which `Filer_Run`s `<PuTTYgen$Dir>` (set by !Boot once the Filer has seen it) or else
+`<PuTTY$Dir>.^.!PuTTYgen`. PuTTYgen is single-instance: a second copy broadcasts `MSG_GEN_PING` (0x4B7C3), waits a
+third of a second for `MSG_GEN_PONG`, and exits; the first brings its window to the front. (Null events must be unmasked
+during that wait: with them masked, `Wimp_PollIdle` never returns and the second copy hung at start-up.)
+
+The window follows windows/puttygen.c: key type radios (RSA, DSA, ECDSA, EdDSA) and one size field (bits for RSA and
+DSA; 256, 384 or 521 for ECDSA; 255 or 448 for EdDSA - the same numbers `puttygen -b` takes), Generate / Cancel with a
+progress bar, then the key's public key (OpenSSH one-line form, as long as the field allows; Copy public key puts all
+of it on the clipboard), fingerprint (SHA256, or MD5 from the window menu), editable comment, passphrase twice, and
+Load / Copy public key / Save public key / Save private key. The window menu adds Export (OpenSSH key, OpenSSH new
+format, ssh.com key, RFC 4716 public key) and the fingerprint choice. Short keys (under 2048 bits) are confirmed,
+under 256 refused; an unsaved key is confirmed before it is replaced, before the window is closed, and before the
+program quits (also on the desktop's PreQuit); a private key is only saved when the two passphrases match and a missing
+passphrase has been confirmed. Loading uses `key_type`, `ppk_encrypted_f`/`import_encrypted`, then `ppk_load_f` or
+`import_ssh2`, with a passphrase box that repeats on a wrong passphrase; a key in a foreign format is imported with
+the notice Windows PuTTYgen gives. SSH-1 keys are left to the puttygen command.
+
+Randomness. With the CryptRandom module (see Entropy) the generator is seeded as the puttygen command does: 32 bytes
+from `ro_cryptrandom_bytes` into `random_reseed` (the PRNG's reseed mixes in its previous key, it does not replace it),
+and the global PRNG is held with `random_ref` for as long as the window is open. Without the module the person has to
+supply it, as in PuTTYgen on every other system: `collect_mouse` samples the pointer while it is over the window and
+the time (`OS_Mouse`, once per centisecond at most, 2 bits counted per sample), until `min(bits, random_seed_bits())`
+bits are in, then `random_reseed`s with them. Set the system variable `PuTTY$ForceMouseEntropy` to use that path on a
+machine that has the module (for testing). The jitter-only PRNG is never used alone for a private key.
+
+Making a key is one long function call that cannot return early, so the progress callbacks (`ProgressReceiver`, a port
+of the Windows one: phases, expected-attempt maths) call `roapp_yield()`, which gives the rest of the desktop a turn,
+and Cancel (or Quit, or the close icon) sets a flag the callback turns into a `longjmp` out of the generator - the
+half-made key (a few kilobytes) is lost, which is the price of not forking a process. Timings in RPCEmu: Ed25519 under
+a second, DSA-1024 about 10 s, RSA-2048 1-2 minutes, RSA-3072 ~100 s.
+
+## Long operations and the poll loop (`roapp_yield`, `roapp_wait`)
+
+`roapp.c`'s `poll_once(mode)` is the main loop's body (run PuTTY's sockets, timers and callbacks, give the Wimp a turn,
+dispatch, then each window's idle job) and is also what a long operation calls to keep the desktop alive:
+`roapp_yield()` (every ~2 cs at most) for work that is computing, `roapp_wait()` for a wait on the network (the Wimp
+may sleep up to two centiseconds, none if the network had something to say). Rules learnt the hard way:
+- **The Wimp returns one event per poll, and redraw requests come ahead of mouse clicks.** A progress bar that asks
+  for a redraw before every yield therefore starves the mouse: a single poll per yield never reached the click on
+  Cancel. So a yield polls repeatedly until the Wimp reports a null event (at most 16 times).
+- Each poll uses its own event block (an outer `dispatch` may still be using its block when the nested poll runs).
+- Only one long operation runs at a time: `roapp_op_begin()` says no if one is running (the SFTP client keeps its table
+  of outstanding requests in a global, so there can only be one connection in use, and key generation shares the rule).
+- A yield is not re-entered, so a handler that starts something long inside another long operation just runs it
+  without yielding; nothing in the program does that.
+- The main loop must keep waking while there is something to watch that the Wimp does not report (a pointer to sample,
+  a network connection that may drop): each such window has an `..._idle_wanted()` and `..._idle()` hook. The file
+  window's first version slept until the next click after the server went away, because `rofiles_live()` turned false
+  once the connection died and so stopped asking for null events before the loss had been reported.
+
+## Saving by dragging (`rosave.c`)
+
+The Wimp's data transfer protocol, from our side as the sender: on the end of a drag (`Wimp_DragBox` type 5, or
+`DragASprite_Start` when there is a sprite to carry) we send `Message_DataSave` (recorded, to the window and icon under
+the pointer) with the leaf name, estimated size and filetype; the receiver replies `Message_DataSaveAck` with a full
+pathname; we write the file there, and if the ack's size word is -1 - a scrap file, which is what an application asks
+for - send `Message_DataLoad`; if it is anything else (the Filer's directory displays answer that way) the file is
+simply in its place and nothing more is sent. Checked in RPCEmu with a Filer directory display and with !Edit's icon
+(which then opens the file). A message nobody answers comes back as event 19 and the drag is simply over. Several
+files can be dragged at once: from the done callback of one, `rosave_drop_another` sends the next DataSave to the same
+place. The "save as" box built on this (icon, name, Cancel, Save) opens at the pointer, saves to a typed whole
+pathname if there is one (a bare leaf is refused with the usual advice; an existing file is confirmed), and is used for
+the key files and for a double-clicked remote file. `DI_FILE` in `rodlg` is the draggable icon (an indirected sprite
+icon of button type "click/drag"); a drag arrives at the dialogue's callback as `BTN_DRAG_SELECT`.
+
+## The file transfer window (`rofiles.c`, `roftp.c`, `rofile.c`)
+
+`roftp.c` is an SFTP connection: it makes a Conf for SFTP in the way psftp's `psftp_connect` does (SSH-2 only, no
+forwarding, subsystem `sftp` with the `sftp-server` fallback), runs a Backend with a Seat of its own whose prompts and
+host-key questions are the same boxes the terminal uses (`roseat.c`'s `roseat_confirm_host_key` /
+`roseat_confirm_yesno`, and a new `ro_prompt` in `rodialog.c` for passwords and keyboard-interactive questions), and
+implements the three hooks upstream's `ssh/sftp.c` wants (`sftp_senddata`, `sftp_recvdata`, `sftp_sendbuffer`) so that
+`sftp_recvdata` waits with `roapp_wait()`. On that it offers synchronous operations - list a directory, stat, realpath,
+mkdir, rename, delete, and download/upload with a progress callback that can cancel - the last two being psftp's
+`sftp_get_file` / `sftp_put_file` loops (`xfer_download_*`, `xfer_upload_*`), with the local files of `rofile.c` (the file
+layer split out of `sftp.c`, so psftp, pscp and the window share one set of name and filetype rules: `.`<->`/`, hard
+spaces, `,xxx` suffixes, a filetype from the extension table or by sniffing, dates). A cancelled or failed download
+removes the part-copied file; a cancel leaves the connection in step (a following download works).
+
+`rofiles.c` is the window. It is a plain Wimp window whose rows are painted in the redraw loop with `Wimp_PlotIcon`
+(sprites `directory`/`file_xxx` and the small variants if they exist, text columns for name, size, date,
+permissions). **`Wimp_PlotIcon` takes coordinates relative to the work area's origin, not the screen's** - the first
+version added the window's screen position and drew everything off to one side. The window's button type is 10, so
+a click arrives as `BTN_CLICK_SELECT`/`ADJUST`/`MENU` (256/512/1024) at the press, a double click as the plain
+`BTN_SELECT`..., and a drag as `BTN_DRAG_SELECT`. Select-click selects one row, Adjust toggles a row; a Select-click on a
+selected row of a multi-selection waits (to see whether a drag follows - the Filer's behaviour) and collapses the
+selection if the button is released without one (`rofiles_idle` looks at the pointer). A file dragged out goes through
+`rosave_drag` (all the selected files, one after another); files dropped in arrive as `Message_DataLoad`, are
+acknowledged, and queued as uploads to the directory shown or the directory row they were dropped on (a directory is
+copied recursively); the queue is drained when no other operation is running. Everything runs inside the event that
+asked for it with the desktop kept alive by the wait, so the window can be closed mid-operation (the operation is told
+to stop, and the window goes when it has). Quitting with the connection open asks first, as for a session.
+A connection that drops while the window is idle is noticed by `rofiles_idle` (title "disconnected" and a notice).
+
+The Connect box serves both uses: its File transfer button (or the icon bar's File transfer... item) opens a window
+for the same host, port, login name and key; it asks for the password or host-key confirmation in boxes as a terminal
+would. Only one window is open at a time.
+
+Checked in RPCEmu against Uppity (its SFTP server serves the host's real file system): listing and navigation
+(parent, double-click, Go to, Home, Refresh, a symbolic link shown as the directory it points to), downloads by drag to
+a Filer window (text and binary, a 3 MB file byte-identical, `,fff` and `,aff` suffixes becoming types, dates kept),
+by double-click and a typed pathname, onto !Edit's icon, of several selected files at once and of whole directories
+(Copy to...), uploads by drag (a text file, a Data file, a `,aff` file, onto a directory row, byte-identical),
+New directory, Rename, Delete with its confirmation, Cancel of a 95 MB download (no partial file left, the connection
+still good), closing the window during a transfer and during authentication, keyboard-interactive login through
+prompt boxes, a refused connection, the server killed while idle, Quit with a live connection, and the console tools
+re-run afterwards (`tools/sftptest.py`: 43 checks, none failed).
+
 ## Not done yet
 
-A settled entropy source, tests on a real Pi, a scrolling category tree (the accordion is enough for
-PuTTY 0.85's panels), a swatch in the Colours panel itself (the chooser you reach with Modify has one).
+Tests on a real Pi, and a scrolling category tree (the accordion is enough for PuTTY 0.85's panels). The file transfer
+window has one connection at a time and no resume of an interrupted copy (psftp's `reget`/`reput` do); symbolic links
+to files are copied as the files they point to; permissions are shown but not edited. The key generator has no SSH-1
+keys (the puttygen command does) and no certificate handling.

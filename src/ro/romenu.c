@@ -79,7 +79,7 @@ unsigned char *menu_block(menu *m)
     if (!b) return NULL;
     memset(b, 0, need);
 
-    width = text_width(m->title) + 16;
+    width = text_width(m->title) + 32;
     for (i = 0; i < m->nitems; i++) {
         int w = text_width(m->text[i]) + 32;   /* room for tick and arrow */
         if (w > width) width = w;

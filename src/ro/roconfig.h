@@ -45,5 +45,6 @@ int roconfig_event_key(wevent *e);
 int roconfig_event_open(wevent *e);
 int roconfig_event_close(wevent *e);
 int roconfig_event_scroll(wevent *e);
+int roconfig_event_redraw(wevent *e);       /* Redraw_Window_Request: paints the colour swatch */
 
 #endif /* PUTTY_ROCONFIG_H */

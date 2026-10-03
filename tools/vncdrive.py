@@ -19,7 +19,8 @@ Commands (one per argument, or one per line on stdin; '#' starts a comment):
                                Up, Down, Home, End, PageUp, PageDown, Insert, F1..F12, or a
                                character, or 0xKEYSYM)
     keydown NAME / keyup NAME  hold / release a key (Shift, Ctrl, Alt too)
-    type TEXT                  type characters (UK layout: Shift is not applied)
+    type TEXT                  type characters (UK layout: Shift is held for capitals and for
+                               the characters that are on the shifted half of a key)
     wait SECONDS
 The buttons are RISC OS's: in RPCEmu the middle VNC button delivers Adjust and the right
 one delivers Menu, which is the reverse of what the bridge's own tool names say.
@@ -33,6 +34,9 @@ sys.path.insert(0, "/usr/share/rpcemu/mcp")
 import rpcemu_mcp as m  # noqa: E402  (reads the password from the environment)
 
 BTN = {"select": 1, "adjust": 2, "menu": 4}
+# Keys and buttons are held and spaced for a time the emulated machine can keep up with; when the host is busy
+# (a big compile) it needs longer: VNC_SLOW=3 triples every such time.
+SLOW = float(os.environ.get("VNC_SLOW", "1"))
 KEYS = {
     "return": 0xFF0D, "escape": 0xFF1B, "tab": 0xFF09, "backspace": 0xFF08, "delete": 0xFFFF,
     "left": 0xFF51, "up": 0xFF52, "right": 0xFF53, "down": 0xFF54, "home": 0xFF50, "end": 0xFF57,
@@ -40,6 +44,14 @@ KEYS = {
     "shift": 0xFFE1, "ctrl": 0xFFE3, "alt": 0xFFE9,
 }
 KEYS.update({"f%d" % i: 0xFFBD + i for i in range(1, 13)})
+
+
+# What a UK keyboard types with Shift held: the unshifted key it is on.
+SHIFTED = {
+    ":": ";", "$": "4", '"': "2", "@": "'", "_": "-", "+": "=", "*": "8", "(": "9", ")": "0",
+    "?": "/", "<": ",", ">": ".", "{": "[", "}": "]", "|": "\\", "!": "1", "%": "5", "^": "6",
+    "&": "7", "~": "#",
+}
 
 
 def keysym(name):
@@ -107,15 +119,20 @@ class Drive:
                 self.ptr(mask=self.mask & ~bit); time.sleep(0.08)
         elif c == "key":
             sym = keysym(args[0])
-            self.key(sym, True); time.sleep(0.06); self.key(sym, False); time.sleep(0.09)
+            self.key(sym, True); time.sleep(0.06 * SLOW); self.key(sym, False); time.sleep(0.09 * SLOW)
         elif c == "keydown":
-            self.key(keysym(args[0]), True); time.sleep(0.07)
+            self.key(keysym(args[0]), True); time.sleep(0.07 * SLOW)
         elif c == "keyup":
-            self.key(keysym(args[0]), False); time.sleep(0.07)
+            self.key(keysym(args[0]), False); time.sleep(0.07 * SLOW)
         elif c == "type":
             for ch in line.split(None, 1)[1]:
-                sym = keysym(ch)
-                self.key(sym, True); time.sleep(0.05); self.key(sym, False); time.sleep(0.08)
+                shift = ch.isupper() or ch in SHIFTED
+                sym = keysym(SHIFTED.get(ch, ch.lower() if ch.isupper() else ch))
+                if shift:
+                    self.key(0xFFE1, True); time.sleep(0.08 * SLOW)
+                self.key(sym, True); time.sleep(0.05 * SLOW); self.key(sym, False); time.sleep(0.08 * SLOW)
+                if shift:
+                    self.key(0xFFE1, False); time.sleep(0.08 * SLOW)
         elif c == "wait":
             time.sleep(float(args[0]))
         else:

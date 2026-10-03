@@ -19,6 +19,21 @@ void wimp_error_os(const _kernel_oserror *e)
     if (e) wimp_error(e->errmess);
 }
 
+void wimp_help_reply(const wmessage *m, const char *text)
+{
+    int blk[64];
+    size_t n;
+    if (!text) return;
+    memset(blk, 0, sizeof blk);
+    n = strlen(text);
+    if (n > 235) n = 235;
+    memcpy((char *)&blk[5], text, n);
+    blk[0] = 20 + (int)((n + 4) & ~(size_t)3);
+    blk[3] = m->my_ref;
+    blk[4] = MSG_HELP_REPLY;
+    _swix(Wimp_SendMessage, _INR(0, 2), 17, blk, m->sender);
+}
+
 bool wimp_sprite_exists(const char *name)
 {
     int w = 0, h = 0;

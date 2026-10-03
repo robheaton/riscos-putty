@@ -22,10 +22,11 @@
 #include "roapp.h"
 #include "roconnect.h"
 #include "roconfig.h"
+#include "rofiles.h"
 
 enum {
     C_HOST = 1, C_PORT, C_SSH, C_TELNET, C_RLOGIN, C_RAW, C_USER, C_KEY,
-    C_SESSION, C_LIST, C_LOAD, C_SAVE, C_DELETE, C_OPEN, C_CANCEL, C_SETTINGS
+    C_SESSION, C_LIST, C_LOAD, C_SAVE, C_DELETE, C_OPEN, C_CANCEL, C_SETTINGS, C_FILES
 };
 
 #define DEFAULT_SETTINGS "Default Settings"
@@ -305,6 +306,18 @@ static void open_session(int buttons)
     if (!roterm_new(c)) conf_free(c);
 }
 
+/* ... or a file transfer window to the same computer, which asks for the same things. */
+static void open_files(int buttons)
+{
+    Conf *c = conf_copy(work);
+    if (!conf_from_fields(c, true)) {
+        conf_free(c);
+        return;
+    }
+    if (!(buttons & BTN_ADJUST)) dlg_close(d_conn);
+    rofiles_open(c);
+}
+
 /* The full configuration dialogue, on a copy of the working settings with the
  * fields applied; its Open starts the session. */
 static void settings_done(void *ctx, bool ok, Conf *conf)
@@ -370,6 +383,9 @@ static void connect_click(dlg *d, int id, int buttons, void *ud)
       case C_OPEN:
         open_session(buttons);
         break;
+      case C_FILES:
+        open_files(buttons);
+        break;
       case C_CANCEL:
         dlg_close(d);
         break;
@@ -411,6 +427,8 @@ static void build_dialog(void)
 
         { DI_BUTTON,    C_SETTINGS, 14, 272, 104, 30, "Settings...", 0, 0,
           "Change every other setting of the session: fonts, colours, SSH options and more." },
+        { DI_BUTTON,    C_FILES,  124, 272, 126, 30, "File transfer", 0, 0,
+          "Connect to the computer to copy files to and from it, instead of logging in. Adjust-click keeps this window open." },
         { DI_BUTTON,    C_CANCEL, 342, 272,  78, 30, "Cancel", 0, 0, "Close this window without connecting." },
         { DI_DEFBUTTON, C_OPEN,   430, 272,  78, 30, "Open", 0, 0,
           "Connect. Adjust-click to keep this window open." },
@@ -424,12 +442,16 @@ static void build_dialog(void)
     }
 }
 
-void roconnect_open(void)
+/* The dialogue is the same for a terminal and for file transfer; which one the person is after
+ * decides the title and which button Return presses. */
+static void open_for(bool files)
 {
     if (!d_conn) {
         build_dialog();
         if (!d_conn) return;
     }
+    dlg_set_title(d_conn, files ? "PuTTY - file transfer" : "PuTTY - connect");
+    dlg_set_keys(d_conn, files ? C_FILES : C_OPEN, C_CANCEL);
     if (!work) {
         work = conf_new();
         do_defaults(NULL, work);
@@ -440,6 +462,16 @@ void roconnect_open(void)
     }
     dlg_open(d_conn);
     dlg_focus(d_conn, C_HOST);
+}
+
+void roconnect_open(void)
+{
+    open_for(false);
+}
+
+void roconnect_open_files(void)
+{
+    open_for(true);
 }
 
 void roconnect_start_session(const char *name)

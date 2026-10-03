@@ -13,7 +13,8 @@ for f in build/ro/*,ff8; do cp "$f" "$DEST/"; done
 [ -f build/test/client.ppk ] && cp build/test/client.ppk "$DEST/ClientKey"
 # the application directory (make app), to be run with Filer_Run
 if [ -d 'build/app/!PuTTY' ]; then
-    rm -rf "$DEST/!PuTTY"
+    rm -rf "$DEST/!PuTTY" "$DEST/!PuTTYgen"
     cp -r 'build/app/!PuTTY' "$DEST/"
+    cp -r 'build/app/!PuTTYgen' "$DEST/"
 fi
 echo "deployed to $DEST"

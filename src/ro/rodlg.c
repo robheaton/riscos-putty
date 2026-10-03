@@ -7,7 +7,7 @@
 #include <string.h>
 #include "rodlg.h"
 
-#define MAX_ITEMS 40
+#define MAX_ITEMS 64
 
 struct dlg {
     struct dlg  *next;
@@ -23,12 +23,14 @@ struct dlg {
     const char  *help[MAX_ITEMS];
     wbox         box[MAX_ITEMS];      /* the icon's box in the work area, OS units */
     unsigned     rgb[MAX_ITEMS];      /* DI_SWATCH: the colour, as ColourTrans wants it (&BBGGRR00) */
+    int          bar[MAX_ITEMS];      /* DI_BAR: how full, 0 to 1000 */
     int          own_redraw;          /* has a swatch, so we draw (not the Wimp) */
     const char  *window_help;
     char         title[64];
     int          open;
-    int          default_id, escape_id;
+    int          default_id, escape_id, close_id;
     dlg_click_fn cb;
+    dlg_menu_fn  menu_cb;
     void        *ud;
 };
 
@@ -94,7 +96,14 @@ static unsigned item_flags(const dlg_item *it)
     case DI_DISPLAY:
         return base | IF_BORDER | IF_HCENTRED | IF_FILLED | IF_FG(7) | IF_BG(1);
     case DI_SWATCH:
+    case DI_BAR:
         return base | IF_BORDER | IF_FG(7) | IF_BG(1);          /* not filled: the Wimp would paint it over ours */
+    case DI_FILE:
+        return IF_SPRITE | IF_INDIRECTED | IF_HCENTRED | IF_VCENTRED | IF_BUTTON(BT_CLICK_DRAG) | IF_FG(7) | IF_BG(1);
+    case DI_HEADING:
+        return base | IF_FILLED | IF_FG(7) | IF_BG(1);
+    case DI_INFO:
+        return base | IF_BORDER | IF_FILLED | IF_FG(7) | IF_BG(1);
     }
     return base;
 }
@@ -111,6 +120,8 @@ static const char *item_validation(const dlg_item *it)
     case DI_BOX:        return "R2";
     case DI_DISPLAY:    return "R2";
     case DI_SWATCH:     return "R2";
+    case DI_BAR:        return "R2";
+    case DI_INFO:       return "R2";
     default:            return NULL;
     }
 }
@@ -144,10 +155,10 @@ dlg *dlg_new_style(int style, const char *title, int w_px, int h_px, const dlg_i
     d->h = h;
     d->cb = cb;
     d->ud = ud;
-    d->default_id = d->escape_id = -1;
+    d->default_id = d->escape_id = d->close_id = -1;
     snprintf(d->title, sizeof d->title, "%s", title);
     for (i = 0; i < n; i++)
-        if (items[i].type == DI_SWATCH) d->own_redraw = 1;
+        if (items[i].type == DI_SWATCH || items[i].type == DI_BAR) d->own_redraw = 1;
 
     memset(&wd, 0, sizeof wd);
     wd.visible.x0 = 400; wd.visible.y0 = 400;
@@ -182,7 +193,8 @@ dlg *dlg_new_style(int style, const char *title, int w_px, int h_px, const dlg_i
         int ih = -1;
 
         if (it->type == DI_LABEL || it->type == DI_RLABEL || it->type == DI_DISPLAY ||
-            it->type == DI_BUTTON || it->type == DI_DEFBUTTON) {
+            it->type == DI_BUTTON || it->type == DI_DEFBUTTON || it->type == DI_INFO ||
+            it->type == DI_HEADING) {
             if (cap < 64) cap = 64;                 /* room for dlg_set_text() */
         }
         d->buf[i] = (char *)calloc(1, (size_t)cap);
@@ -204,7 +216,8 @@ dlg *dlg_new_style(int style, const char *title, int w_px, int h_px, const dlg_i
         d->box[i] = blk.icon.box;
         blk.icon.flags = item_flags(it);
         blk.icon.data.ind.buf = d->buf[i];
-        blk.icon.data.ind.validation = d->valid[i] ? d->valid[i] : (char *)-1;
+        /* (for a sprite icon the second word is the sprite area: 1 is the Wimp's pool) */
+        blk.icon.data.ind.validation = it->type == DI_FILE ? (char *)1 : d->valid[i] ? d->valid[i] : (char *)-1;
         blk.icon.data.ind.size = cap;
         _swix(Wimp_CreateIcon, _INR(0, 1) | _OUT(0), 0, &blk, &ih);
         d->icon[i] = ih;
@@ -223,7 +236,15 @@ void dlg_free(dlg *d)
     for (pp = &dialogs; *pp; pp = &(*pp)->next)
         if (*pp == d) { *pp = d->next; break; }
     if (d->win >= 0) _swix(Wimp_DeleteWindow, _IN(1), &d->win);
-    for (i = 0; i < d->n; i++) { free(d->buf[i]); free(d->valid[i]); }
+    for (i = 0; i < d->n; i++) {
+        if (d->type[i] == DI_PASSWORD && d->buf[i]) {          /* a passphrase must not be left in freed memory */
+            volatile char *p = d->buf[i];
+            int j;
+            for (j = 0; j < d->buflen[i]; j++) p[j] = 0;
+        }
+        free(d->buf[i]);
+        free(d->valid[i]);
+    }
     free(d);
 }
 
@@ -272,6 +293,41 @@ void dlg_open(dlg *d)
     caret_to(d, first_field(d));
 }
 
+/* Where a window `w` by `h` wide should go to be centred on (x, y) and wholly on the screen. */
+static void place_at(int w, int h, int x, int y, wbox *out)
+{
+    int v, scr_w = 0, scr_h = 0;
+    if (!_swix(OS_ReadModeVariable, _INR(0, 1) | _OUT(2), -1, 11, &v)) scr_w = (v + 1) << mode_var(4, 1);
+    if (!_swix(OS_ReadModeVariable, _INR(0, 1) | _OUT(2), -1, 12, &v)) scr_h = (v + 1) << mode_var(5, 1);
+    out->x0 = x - w / 2;
+    out->y1 = y + h / 2;
+    if (scr_w > 0 && out->x0 + w > scr_w) out->x0 = scr_w - w;
+    if (out->x0 < 0) out->x0 = 0;
+    if (scr_h > 0 && out->y1 > scr_h - 80) out->y1 = scr_h - 80;     /* (clear of the title bar's top) */
+    if (out->y1 - h < 96) out->y1 = 96 + h;                           /* (and of the icon bar) */
+    out->x1 = out->x0 + w;
+    out->y0 = out->y1 - h;
+}
+
+void dlg_open_at(dlg *d, int x, int y)
+{
+    wstate s;
+    if (!d) return;
+    if (d->open) { dlg_open(d); return; }
+    memset(&s, 0, sizeof s);
+    s.handle = d->win;
+    place_at(d->w, d->h, x, y, &s.visible);
+    s.behind = -1;
+    _swix(Wimp_OpenWindow, _IN(1), &s);
+    d->open = 1;
+    caret_to(d, first_field(d));
+}
+
+void dlg_set_menu_fn(dlg *d, dlg_menu_fn fn)
+{
+    if (d) d->menu_cb = fn;
+}
+
 void dlg_close(dlg *d)
 {
     if (!d || !d->open) return;
@@ -280,6 +336,14 @@ void dlg_close(dlg *d)
 }
 
 void dlg_set_help(dlg *d, const char *text) { if (d) d->window_help = text; }
+
+void dlg_set_title(dlg *d, const char *title)
+{
+    if (!d) return;
+    snprintf(d->title, sizeof d->title, "%s", title);
+    if (d->open)
+        _swix(Wimp_ForceRedraw, _INR(0, 2), d->win, 0x4B534154, 3);         /* the title bar */
+}
 
 const char *dlg_help_text(int win, int icon)
 {
@@ -311,6 +375,37 @@ void dlg_set_swatch(dlg *d, int id, int r, int g, int b)
         _swix(Wimp_ForceRedraw, _INR(0, 4), d->win, d->box[i].x0, d->box[i].y0, d->box[i].x1, d->box[i].y1);
 }
 
+void dlg_set_bar(dlg *d, int id, int permille)
+{
+    int i = find_index_by_id(d, id);
+    if (i < 0 || d->type[i] != DI_BAR) return;
+    if (permille < 0) permille = 0;
+    if (permille > 1000) permille = 1000;
+    if (permille == d->bar[i]) return;
+    d->bar[i] = permille;
+    if (d->open)
+        _swix(Wimp_ForceRedraw, _INR(0, 4), d->win, d->box[i].x0, d->box[i].y0, d->box[i].x1, d->box[i].y1);
+}
+
+int dlg_item_box(dlg *d, int id, int *x0, int *y0, int *x1, int *y1)
+{
+    wstate s;
+    int i = find_index_by_id(d, id);
+    if (i < 0) return 0;
+    s.handle = d->win;
+    if (_swix(Wimp_GetWindowState, _IN(1), &s)) return 0;
+    *x0 = s.visible.x0 - s.scroll_x + d->box[i].x0;
+    *x1 = s.visible.x0 - s.scroll_x + d->box[i].x1;
+    *y1 = s.visible.y1 - s.scroll_y + d->box[i].y1;
+    *y0 = s.visible.y1 - s.scroll_y + d->box[i].y0;
+    return 1;
+}
+
+dlg *dlg_from_window(int win)
+{
+    return find_dlg(win);
+}
+
 /* The Wimp has drawn the window and its icons for each rectangle that needs it; put the colours in. */
 int dlg_event_redraw(wevent *e)
 {
@@ -324,10 +419,20 @@ int dlg_event_redraw(wevent *e)
     while (more) {
         const int ox = r->visible.x0 - r->scroll_x, oy = r->visible.y1 - r->scroll_y;
         for (i = 0; i < d->n; i++) {
-            if (d->type[i] != DI_SWATCH) continue;
-            _swix(ColourTrans_SetGCOL, _IN(0) | _INR(3, 4), d->rgb[i], 0, 0);
-            _swix(OS_Plot, _INR(0, 2), 4, ox + d->box[i].x0 + inset_x, oy + d->box[i].y0 + inset_y);
-            _swix(OS_Plot, _INR(0, 2), 0x65, ox + d->box[i].x1 - inset_x - 1, oy + d->box[i].y1 - inset_y - 1);
+            int left = ox + d->box[i].x0 + inset_x, right = ox + d->box[i].x1 - inset_x;
+            unsigned colour;
+            if (d->type[i] == DI_SWATCH) {
+                colour = d->rgb[i];
+            } else if (d->type[i] == DI_BAR) {
+                colour = 0xCC663300u;                          /* a blue, &BBGGRR00 */
+                right = left + (int)(((long long)(right - left) * d->bar[i]) / 1000);
+            } else {
+                continue;
+            }
+            if (right <= left) continue;
+            _swix(ColourTrans_SetGCOL, _IN(0) | _INR(3, 4), colour, 0, 0);
+            _swix(OS_Plot, _INR(0, 2), 4, left, oy + d->box[i].y0 + inset_y);
+            _swix(OS_Plot, _INR(0, 2), 0x65, right - 1, oy + d->box[i].y1 - inset_y - 1);
         }
         if (_swix(Wimp_GetRectangle, _IN(1) | _OUT(0), r, &more)) break;
     }
@@ -382,7 +487,12 @@ void dlg_focus(dlg *d, int id)
 void dlg_set_keys(dlg *d, int default_id, int escape_id)
 {
     d->default_id = default_id;
-    d->escape_id = escape_id;
+    d->escape_id = d->close_id = escape_id;
+}
+
+void dlg_set_close_id(dlg *d, int id)
+{
+    d->close_id = id;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -394,10 +504,14 @@ int dlg_event_click(wevent *e)
     dlg *d = find_dlg(p->window);
     int i;
     if (!d) return 0;
+    if ((p->buttons & BTN_MENU) && d->menu_cb) {
+        d->menu_cb(d, p->x, p->y, d->ud);
+        return 1;
+    }
     i = find_index_by_icon(d, p->icon);
     if (i < 0) return 1;
     switch (d->type[i]) {
-    case DI_BUTTON: case DI_DEFBUTTON: case DI_OPTION: case DI_RADIO:
+    case DI_BUTTON: case DI_DEFBUTTON: case DI_OPTION: case DI_RADIO: case DI_FILE:
         if (d->cb) d->cb(d, d->id[i], (int)p->buttons, d->ud);
         break;
     default:
@@ -450,7 +564,7 @@ int dlg_event_close(wevent *e)
 {
     dlg *d = find_dlg(e->words[0]);
     if (!d) return 0;
-    if (d->escape_id >= 0 && d->cb) d->cb(d, d->escape_id, BTN_SELECT, d->ud);
+    if (d->close_id >= 0 && d->cb) d->cb(d, d->close_id, BTN_SELECT, d->ud);
     else dlg_close(d);
     return 1;
 }

@@ -27,6 +27,8 @@ static int mode_var(int var, int dflt)
     return v;
 }
 
+static void force_redraw_area(dlgparam *dp, int x, int y, int w, int h);
+
 static dlgparam *find_dp(int win)
 {
     dlgparam *dp;
@@ -301,6 +303,92 @@ static void create_widget_icons(dlgparam *dp, Widget *w, int ox, int oy)
             if (w->icons[i].role == ROLE_RADIO) select_icon(dp, w->icons[i].handle, w->icons[i].arg == w->radio);
 }
 
+/* ------------------------------------------------------------------------ */
+/* the swatch in Window > Colours                                           */
+
+/*
+ * PuTTY's Window > Colours panel lists the colours and shows the one chosen as three numbers
+ * (Red, Green, Blue) beside a Modify button.  We add a sunken well beside the Modify button,
+ * level with it and as wide as the number boxes, and paint the colour in it.
+ */
+static Widget *panel_edit(Panel *p, const char *label)
+{
+    int i;
+    for (i = 0; i < p->nw; i++) {
+        dlgcontrol *c = p->w[i]->ctrl;
+        if (c->type == CTRL_EDITBOX && c->label && !strcmp(c->label, label)) return p->w[i];
+    }
+    return NULL;
+}
+
+/* The well's box in pixels from the dialogue's top left, if the panel on show has one. */
+static bool swatch_geometry(dlgparam *dp, int *x, int *y, int *w, int *h)
+{
+    Panel *p = dp->cur;
+    Widget *red, *modify = NULL;
+    int i;
+
+    if (!p || !p->path || strcmp(p->path, "Window/Colours")) return false;
+    red = panel_edit(p, "Red");
+    for (i = 0; i < p->nw; i++) {
+        dlgcontrol *c = p->w[i]->ctrl;
+        if (c->type == CTRL_BUTTON && c->label && !strcmp(c->label, "Modify")) modify = p->w[i];
+    }
+    if (!red || !modify) return false;
+    *x = PANEL_X + red->x + red->fx;
+    *w = red->fw;
+    *y = PANEL_Y + HEAD_H + modify->y + modify->fy;
+    *h = modify->fh;
+    return true;
+}
+
+/* The colour the three number boxes hold; false while nothing is selected (they are empty). */
+static bool swatch_colour(dlgparam *dp, int rgb[3])
+{
+    static const char *const names[3] = { "Red", "Green", "Blue" };
+    int i;
+    for (i = 0; i < 3; i++) {
+        Widget *w = panel_edit(dp->cur, names[i]);
+        if (!w || !w->text || !w->text[0]) return false;
+        rgb[i] = atoi(w->text);
+        if (rgb[i] < 0) rgb[i] = 0;
+        if (rgb[i] > 255) rgb[i] = 255;
+    }
+    return true;
+}
+
+static void swatch_changed(dlgparam *dp, Widget *w)
+{
+    int x, y, ww, hh;
+    if (w->panel == dp->cur && w->ctrl->type == CTRL_EDITBOX && swatch_geometry(dp, &x, &y, &ww, &hh))
+        force_redraw_area(dp, x, y, ww, hh);
+}
+
+/* The Wimp draws the window and its icons for each rectangle that needs it; the colour goes on top. */
+int roconfig_event_redraw(wevent *e)
+{
+    dlgparam *dp = find_dp(e->words[0]);
+    wdraw *r = (wdraw *)e->words;
+    int more = 0, x, y, w, h, rgb[3];
+    bool paint;
+    const int sx = 1 << xeig, sy = 1 << yeig;
+
+    if (!dp) return 0;
+    if (_swix(Wimp_RedrawWindow, _IN(1) | _OUT(0), r, &more)) return 1;
+    paint = swatch_geometry(dp, &x, &y, &w, &h) && swatch_colour(dp, rgb);
+    while (more) {
+        if (paint) {
+            const int ox = r->visible.x0 - r->scroll_x, oy = r->visible.y1 - r->scroll_y;
+            const unsigned col = ((unsigned)rgb[2] << 24) | ((unsigned)rgb[1] << 16) | ((unsigned)rgb[0] << 8);
+            _swix(ColourTrans_SetGCOL, _IN(0) | _INR(3, 4), col, 0, 0);
+            _swix(OS_Plot, _INR(0, 2), 4, ox + (x + 3) * sx, oy - (y + h - 3) * sy);
+            _swix(OS_Plot, _INR(0, 2), 0x65, ox + (x + w - 3) * sx - 1, oy - (y + 3) * sy - 1);
+        }
+        if (_swix(Wimp_GetRectangle, _IN(1) | _OUT(0), r, &more)) break;
+    }
+    return 1;
+}
+
 /* Bring the icons of a control into line with its value. */
 void cfgwin_update_widget(dlgparam *dp, Widget *w)
 {
@@ -313,6 +401,7 @@ void cfgwin_update_widget(dlgparam *dp, Widget *w)
       case CTRL_FONTSELECT:
         for (i = 0; i < w->nicons; i++)
             if (w->icons[i].role == ROLE_MAIN) set_icon(dp, w->icons[i].handle, 0, 0);
+        swatch_changed(dp, w);
         break;
       case CTRL_CHECKBOX:
         select_icon(dp, w->icons[0].handle, w->checked);
@@ -370,7 +459,6 @@ void cfgwin_update_label(dlgparam *dp, Widget *w)
 /* ------------------------------------------------------------------------ */
 /* frames and headings                                                      */
 
-#define HEAD_H 30
 
 static void add_decor(dlgparam *dp, unsigned flags, int x, int y, int w, int h, const char *text, const char *valid)
 {
@@ -576,6 +664,11 @@ void cfgwin_show_panel(dlgparam *dp, Panel *p)
                   (int)strlen(b->title) * CHAR_W + 12, 18, b->title, "");
     }
     for (i = 0; i < p->nw; i++) create_widget_icons(dp, p->w[i], PANEL_X, oy);
+    {
+        int sx, sy, sw, sh;
+        if (swatch_geometry(dp, &sx, &sy, &sw, &sh))        /* the sunken well the colour is painted in */
+            add_decor(dp, IF_TEXT | IF_BORDER | IF_FG(7) | IF_BG(1), sx, sy, sw, sh, "", "R2");
+    }
 
     /* Wimp_DeleteIcon does not repaint what the icon covered, so redraw the tree and
      * the panel (they are drawn once, with the icons as they now are). */
@@ -616,7 +709,9 @@ void cfgwin_create(dlgparam *dp)
     wd.visible.x0 = 200; wd.visible.y0 = 200;
     wd.visible.x1 = 200 + (CFG_W << xeig); wd.visible.y1 = 200 + (CFG_H << yeig);
     wd.behind = -1;
-    wd.flags = WF_MOVEABLE | WF_AUTO_REDRAW | WF_BACK_ICON | WF_CLOSE_ICON | WF_TITLE_BAR | WF_NEW_FORMAT;
+    /* (not auto-redraw: roconfig_event_redraw lets the Wimp draw the icons and then paints the
+     * colour swatch in Window > Colours over them) */
+    wd.flags = WF_MOVEABLE | WF_BACK_ICON | WF_CLOSE_ICON | WF_TITLE_BAR | WF_NEW_FORMAT;
     wd.title_fg = 7; wd.title_bg = 2; wd.work_fg = 7; wd.work_bg = 1;
     wd.scroll_outer = 3; wd.scroll_inner = 1; wd.title_hi = 12;
     wd.extent.x0 = 0; wd.extent.x1 = CFG_W << xeig; wd.extent.y0 = -(CFG_H << yeig); wd.extent.y1 = 0;

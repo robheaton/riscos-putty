@@ -45,4 +45,17 @@ const char *ro_local_leaf(const char *path);
  */
 bool ro_looks_local(const char *spec);
 
+/*
+ * For the Wimp file transfer window (rofile.c):
+ *
+ *  - the RISC OS filetype a remote leaf implies (its ",xxx" suffix, else a well-known extension), -1 if none;
+ *  - the RISC OS leaf to save a remote file under (converted, no ",xxx"); free it with sfree;
+ *  - the remote leaf for a local leaf and filetype (-1: none);  free it with sfree;
+ *  - what a local object is: 0 none, 1 file, 2 directory; with its filetype, size and mtime if wanted.
+ */
+int   ro_filetype_for_remote_leaf(const char *leaf);
+char *ro_remote_leaf_to_save_leaf(const char *leaf);
+char *ro_local_leaf_to_remote_leaf(const char *local_leaf, int filetype);
+int   ro_local_stat(const char *path, int *filetype, unsigned long *size, unsigned long *mtime);
+
 #endif /* PUTTY_ROSFTP_H */

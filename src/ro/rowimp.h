@@ -120,6 +120,13 @@
 #define BTN_ADJUST         1
 #define BTN_MENU           2
 #define BTN_SELECT         4
+#define BTN_DRAG_ADJUST    16
+#define BTN_DRAG_SELECT    64
+/* In a window or icon whose button type tells single clicks from double clicks (the Filer's, type 10),
+ * a single click has these values, and BTN_ADJUST / BTN_MENU / BTN_SELECT mean a DOUBLE click. */
+#define BTN_CLICK_ADJUST   256
+#define BTN_CLICK_MENU     512
+#define BTN_CLICK_SELECT   1024
 
 /* ---- structures -------------------------------------------------------- */
 
@@ -207,6 +214,9 @@ void wimp_error_os(const _kernel_oserror *e);
 void wimp_msg_path(const wmessage *m, char *out, size_t cap);
 /* Answer a DataLoad (Message_DataLoadAck): the file has been dealt with. */
 void wimp_send_load_ack(const wmessage *m, const char *path);
+
+/* Answer Message_HelpRequest `m` with this text (nothing is sent if it is NULL). */
+void wimp_help_reply(const wmessage *m, const char *text);
 
 /* Is there a sprite of this name in the Wimp's sprite pool? */
 bool wimp_sprite_exists(const char *name);
