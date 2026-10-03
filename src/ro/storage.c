@@ -27,7 +27,7 @@
 
 enum {
     INDEX_DIR, INDEX_HOSTKEYS, INDEX_HOSTKEYS_TMP, INDEX_RANDSEED,
-    INDEX_SESSIONDIR, INDEX_SESSION, INDEX_HOSTCADIR, INDEX_HOSTCA, INDEX_WINPOS
+    INDEX_SESSIONDIR, INDEX_SESSION, INDEX_HOSTCADIR, INDEX_HOSTCA, INDEX_WINPOS, INDEX_AGENTKEYS
 };
 
 static const char hex[16] = "0123456789ABCDEF";
@@ -123,6 +123,12 @@ static char *make_filename(int index, const char *subname)
     if (index == INDEX_RANDSEED) {
         tmp = data_dir();
         ret = dupprintf("%s.RandomSeed", tmp);
+        sfree(tmp);
+        return ret;
+    }
+    if (index == INDEX_AGENTKEYS) {
+        tmp = data_dir();
+        ret = dupprintf("%s.AgentKeys", tmp);
         sfree(tmp);
         return ret;
     }
@@ -898,6 +904,36 @@ void ro_winpos_put(const char *key, int x, int y)
         ro_set_filetype(fname, FILETYPE_TEXT);
     }
     sfree(fname);
+}
+
+/*
+ * The start-up list of the key agent: a text file naming private keys to add when PuTTY starts, one
+ * pathname to a line.  With `create` the file (and its directory) are made if need be, with a note on
+ * what goes in it, so that there is something to edit.
+ */
+char *ro_agentkeys_path(bool create)
+{
+    char *fname = make_filename(INDEX_AGENTKEYS, NULL);
+
+    if (create) {
+        FILE *fp = fopen(fname, "r");
+        if (fp) {
+            fclose(fp);
+        } else {
+            char *dir = make_filename(INDEX_DIR, NULL), *errmsg = make_dir_path(dir, 0700);
+            sfree(dir);
+            sfree(errmsg);
+            fp = fopen(fname, "w");
+            if (fp) {
+                fputs("# Private keys for PuTTY's key agent to pick up when PuTTY starts, one pathname per line.\n"
+                      "# A key with a passphrase asks for it then.  Lines that start with # are ignored.\n",
+                      fp);
+                fclose(fp);
+                ro_set_filetype(fname, FILETYPE_TEXT);
+            }
+        }
+    }
+    return fname;
 }
 
 void cleanup_all(void)

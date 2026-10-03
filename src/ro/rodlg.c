@@ -479,6 +479,15 @@ void dlg_set_shaded(dlg *d, int id, int on)
     wimp_set_icon_state(d->win, d->icon[i], on ? IF_SHADED : 0, IF_SHADED);
 }
 
+/* The Wimp does not draw or notice an icon whose "deleted" flag is set, so this hides an item and brings it back. */
+void dlg_set_hidden(dlg *d, int id, int on)
+{
+    int i = find_index_by_id(d, id);
+    if (i < 0) return;
+    wimp_set_icon_state(d->win, d->icon[i], on ? IF_DELETED : 0, IF_DELETED);
+    _swix(Wimp_ForceRedraw, _INR(0, 4), d->win, d->box[i].x0, d->box[i].y0, d->box[i].x1, d->box[i].y1);
+}
+
 void dlg_focus(dlg *d, int id)
 {
     caret_to(d, find_index_by_id(d, id));

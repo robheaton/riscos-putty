@@ -37,9 +37,10 @@
 #define SCROLL_LINES 3                 /* lines per wheel notch or scroll arrow click */
 #define MULTICLICK_CS 40               /* clicks closer together than this count as double/triple */
 
-/* INKEY numbers for OS_Byte 129 (not the numbers key events use) */
+/* INKEY numbers for OS_Byte 129 (not the numbers key events use, and one more than the scan numbers of
+ * OS_Byte 121: see tests/ro/keyscan.c) */
 enum { K_LSHIFT = 4, K_LCTRL = 5, K_LALT = 6, K_RSHIFT = 7, K_RCTRL = 8, K_RALT = 9,
-       K_UP = 58, K_DOWN = 42 };
+       K_UP = 58, K_DOWN = 42, K_HOME = 63, K_PGUP = 64, K_PGDN = 79 };
 
 static RoTerm *terms;
 static int term_counter;
@@ -1146,11 +1147,12 @@ static void send_meta(RoTerm *t, bool meta, const char *buf, int n)
     send_raw(t, out, n + 1);
 }
 
-/* Shift-Insert (paste) and Ctrl-Insert (copy), as configured under "Copy and paste". */
-static void clipboard_key(RoTerm *t, bool paste)
+/* Shift-Insert (paste) and Ctrl-Insert (copy), or Ctrl-Shift-V and Ctrl-Shift-C, as configured under
+ * "Window > Selection": `setting` says which of the two (CONF_ctrlshiftins or CONF_ctrlshiftcv). */
+static void clipboard_key(RoTerm *t, int setting, bool paste)
 {
     static const int clips[] = { CLIP_CLIPBOARD };
-    switch (conf_get_int(t->conf, CONF_ctrlshiftins)) {
+    switch (conf_get_int(t->conf, setting)) {
       case CLIPUI_IMPLICIT:
         if (paste) term_request_paste(t->term, MOUSE_PASTE_CLIPBOARD);
         break;
@@ -1176,6 +1178,7 @@ void roterm_key(RoTerm *t, wevent *e)
         return;
     }
     noise_ultralight(NOISE_SOURCE_KEY, (unsigned long)code);
+    ro_trace("PuTTYkey$Trace", "key %03x shift %d ctrl %d alt %d", code, (int)shift, (int)ctrl, (int)alt);
     if (alt && code >= 0x80 && code <= 0xFF) {
         /* Left Alt is Meta here (see poll_meta), so the characters the keyboard layout
          * puts on Alt-digit and the like are dropped; AltGr, on the right, still composes. */
@@ -1194,17 +1197,27 @@ void roterm_key(RoTerm *t, wevent *e)
         if (code & 0x20) ctrl = true;
         switch (base) {
           case 0x18F: case 0x18E: case 0x18C: case 0x18D: {
-            /* Page Up and Page Down arrive as Shift-Up and Shift-Down */
-            if ((code == 0x19F || code == 0x19E)) {
-                const bool arrow = key_down(code == 0x19F ? K_UP : K_DOWN);
-                if (!arrow) {
+            /*
+             * Page Up and Page Down arrive as Shift-Up and Shift-Down - and with Shift held, which cancels
+             * that, as plain Up and Down - so the keyboard is asked which key is really down.  If neither is
+             * (a tap that ended before we looked), a code with the Shift bit and nothing else is taken to be
+             * the page key, and a plain one the arrow.
+             */
+            if (base == 0x18F || base == 0x18E) {
+                const bool up = base == 0x18F;
+                const bool arrow = key_down(up ? K_UP : K_DOWN);
+                const bool page = key_down(up ? K_PGUP : K_PGDN) ||
+                                  (!arrow && (code == 0x19F || code == 0x19E));
+                if (page && !arrow) {
                     shift = shift_down();
-                    if (shift) {                       /* scroll the terminal itself */
-                        term_scroll(t->term, 0, code == 0x19F ? -(t->rows - 1) : (t->rows - 1));
+                    ctrl = ctrl_down();
+                    if (shift || ctrl) {               /* scroll the terminal itself: a page, or with Ctrl a line */
+                        const int lines = shift ? t->rows - 1 : 1;
+                        term_scroll(t->term, 0, up ? -lines : lines);
                         flush(t);
                         return;
                     }
-                    n = format_small_keypad_key(buf, t->term, code == 0x19F ? SKK_PGUP : SKK_PGDN,
+                    n = format_small_keypad_key(buf, t->term, up ? SKK_PGUP : SKK_PGDN,
                                                 shift, ctrl, alt, &consumed_alt);
                     break;
                 }
@@ -1230,7 +1243,7 @@ void roterm_key(RoTerm *t, wevent *e)
           case 0x1CD:
             /* Shift-Insert pastes and Ctrl-Insert copies, as in PuTTY elsewhere */
             if (shift != ctrl) {
-                clipboard_key(t, shift);
+                clipboard_key(t, CONF_ctrlshiftins, shift);
                 return;
             }
             n = format_small_keypad_key(buf, t->term, SKK_INSERT, shift, ctrl, alt, &consumed_alt);
@@ -1259,8 +1272,20 @@ void roterm_key(RoTerm *t, wevent *e)
         return;
     }
     if (code == 0x1E) {
+        /* Home - or Ctrl-^ (vim's alternate file), which has the same code; the Home key tells them apart */
+        if (ctrl && !key_down(K_HOME)) {
+            buf[0] = 0x1E;
+            send_meta(t, alt, buf, 1);
+            return;
+        }
         n = format_small_keypad_key(buf, t->term, SKK_HOME, shift, ctrl, alt, &consumed_alt);
         send_meta(t, alt && !consumed_alt, buf, n);
+        return;
+    }
+    if ((code == 0x03 || code == 0x16) && shift && ctrl &&
+        (conf_get_int(t->conf, CONF_ctrlshiftcv) == CLIPUI_IMPLICIT ||
+         conf_get_int(t->conf, CONF_ctrlshiftcv) == CLIPUI_EXPLICIT)) {
+        clipboard_key(t, CONF_ctrlshiftcv, code == 0x16);   /* Ctrl-Shift-C copies, Ctrl-Shift-V pastes */
         return;
     }
     if (code >= 1 && code < 0x20) {                     /* Escape and the Ctrl- characters */
@@ -1269,7 +1294,7 @@ void roterm_key(RoTerm *t, wevent *e)
         return;
     }
     if (code >= 0x20 && code <= 0x7E) {
-        buf[0] = (char)code;
+        buf[0] = (code == 0x20 && ctrl) ? 0 : (char)code;       /* Ctrl-Space is NUL, as emacs expects */
         send_meta(t, alt, buf, 1);
         return;
     }
@@ -1482,13 +1507,63 @@ static const struct { signed char key; char lower, upper; } meta_keys[] = {
 };
 #define N_META_KEYS ((int)(sizeof meta_keys / sizeof meta_keys[0]))
 
+/*
+ * ... and the same for the keys that send sequences rather than characters: with Alt held the Wimp is
+ * told of none of the cursor, editing and function keys, nor of Backspace, Return and Escape.  (Tab and Space
+ * do arrive, and are dealt with as usual.)
+ */
+enum { MK_ARROW, MK_SMALL, MK_FUNC, MK_BACKSPACE, MK_RETURN, MK_ESCAPE };
+static const struct { signed char key; unsigned char kind, arg; } meta_special[] = {
+    { 58, MK_ARROW, 'A' }, { 42, MK_ARROW, 'B' }, { 122, MK_ARROW, 'C' }, { 26, MK_ARROW, 'D' },
+    { 63, MK_SMALL, SKK_HOME }, { 106, MK_SMALL, SKK_END }, { 62, MK_SMALL, SKK_INSERT },
+    { 90, MK_SMALL, SKK_DELETE }, { 64, MK_SMALL, SKK_PGUP }, { 79, MK_SMALL, SKK_PGDN },
+    { 114, MK_FUNC, 1 }, { 115, MK_FUNC, 2 }, { 116, MK_FUNC, 3 }, { 21, MK_FUNC, 4 }, { 117, MK_FUNC, 5 },
+    { 118, MK_FUNC, 6 }, { 23, MK_FUNC, 7 }, { 119, MK_FUNC, 8 }, { 120, MK_FUNC, 9 }, { 31, MK_FUNC, 10 },
+    { 29, MK_FUNC, 11 }, { 30, MK_FUNC, 12 },
+    { 48, MK_BACKSPACE, 0 }, { 74, MK_RETURN, 0 }, { 113, MK_ESCAPE, 0 },
+};
+#define N_META_SPECIAL ((int)(sizeof meta_special / sizeof meta_special[0]))
+
+static void send_meta_special(RoTerm *t, int kind, int arg, bool shift, bool ctrl)
+{
+    char buf[64];
+    bool consumed_alt = false;
+    int n = -1;
+
+    switch (kind) {
+      case MK_ARROW:
+        n = format_arrow_key(buf, t->term, arg, shift, ctrl, true, &consumed_alt);
+        break;
+      case MK_SMALL:
+        n = format_small_keypad_key(buf, t->term, arg, shift, ctrl, true, &consumed_alt);
+        break;
+      case MK_FUNC:
+        n = format_function_key(buf, t->term, arg, shift, ctrl, true, &consumed_alt);
+        break;
+      case MK_BACKSPACE:
+        buf[0] = conf_get_bool(t->conf, CONF_bksp_is_delete) != shift ? 0x7F : 0x08;
+        send_dedicated(t, true, buf, 1);
+        return;
+      case MK_RETURN:
+        if (t->term->cr_lf_return) send_meta(t, true, "\r\n", 2);
+        else send_dedicated(t, true, "\r", 1);
+        return;
+      default:
+        buf[0] = '\033';
+        send_meta(t, true, buf, 1);
+        return;
+    }
+    send_meta(t, !consumed_alt, buf, n);
+}
+
 static void poll_meta(RoTerm *t)
 {
-    static bool was[N_META_KEYS];
+    static bool was[N_META_KEYS], was_special[N_META_SPECIAL];
     int i;
 
     if (!meta_down() || !t->focus || !t->term || t->is_log) {
         memset(was, 0, sizeof was);     /* start again with the next press of Alt */
+        memset(was_special, 0, sizeof was_special);
         return;
     }
     {
@@ -1502,6 +1577,12 @@ static void poll_meta(RoTerm *t)
                 send_meta(t, true, &c, 1);
             }
             was[i] = down;
+        }
+        for (i = 0; i < N_META_SPECIAL; i++) {
+            const bool down = key_down(meta_special[i].key);
+            if (down && !was_special[i])
+                send_meta_special(t, meta_special[i].kind, meta_special[i].arg, shift, ctrl);
+            was_special[i] = down;
         }
     }
 }

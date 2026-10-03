@@ -71,7 +71,7 @@ TERMINAL:= $(call p,terminal,terminal bidi lineedit)
 CHARSET := $(call p,charset,fromucs localenc macenc mimeenc sbcs slookup toucs utf8 xenc)
 KEYGEN  := $(call p,keygen,dsa ecdsa millerrabin mpunsafe pockle prime primecandidate rsa \
   smallprimes)
-ROOT    := sshpubk sshrand pinger logging callback timing cmdline settings errsock x11disp \
+ROOT    := sshpubk sshrand pinger logging callback timing cmdline settings errsock x11disp aqsync \
   clicons console ldisc config dialog import utils/logeventf psftpcommon
 
 CORE    := $(UTILS) $(STUBS) $(CRYPTO) $(KEYGEN) $(SSH) $(PROXY) $(OTHERBE) $(TERMINAL) $(CHARSET) \
@@ -191,11 +191,20 @@ $(B)/pscp,ff8: $(B)/gen/pscp.o $(B)/be_pscp.o $(SFTP_O) $(B)/libputty.a
 
 # ---- the Wimp application ---------------------------------------------------
 GUI_SRC  := roapp rowindow roseat rowimp rofont rodlg rodialog romenu roclip rocontext roconnect roconfig rocfgwin rosave roinfo \
-            rofiles roftp rofile
+            rofiles roftp rofile roagent
 GUI_O    := $(addprefix $(B)/ro/,$(addsuffix .o,$(GUI_SRC)))
-GUI_STUBS := stubs/no-agent stubs/no-gss stubs/no-console stubs/no-dit stubs/no-printing
+# (the key agent is in the program, so there is no stand-in for it: src/ro/roagent.c and upstream's pageant.c)
+GUI_STUBS := stubs/no-gss stubs/no-console stubs/no-dit stubs/no-printing
 GUI_O    += $(addprefix $(B)/up/,$(addsuffix .o,$(GUI_STUBS)))
-GUI_ALL  := $(GUI_O) $(B)/be_putty.o $(RO_O) $(UXGEN_O)
+GUI_ALL  := $(GUI_O) $(B)/pageant.o $(B)/be_putty.o $(RO_O) $(UXGEN_O)
+
+# Pageant's core, the key agent.  It defines random_read() for the stand-alone Pageant, which has no random
+# number generator and so makes this one a fatal error; here sshrand.c has the real one, so the stand-in
+# is renamed out of the way (the agent never makes random numbers: it only signs).
+$(B)/pageant.o: $(U)/pageant.c $(G)/licence.h
+	@mkdir -p $(@D)
+	@echo "  CC  $<  (key agent)"
+	$(Q)$(RCC) $(UFLAGS) -Drandom_read=pageant_random_read_unused -c -o $@ $<
 
 $(B)/be_putty.o: $(U)/be_list.c
 	@mkdir -p $(@D)

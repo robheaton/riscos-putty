@@ -256,7 +256,7 @@ like plink not sending). Rlogin has no half-close, so plink with its input from 
 it waits for the server to close, as upstream does. (The host's own plink cannot be used for comparison: Rlogin needs a
 privileged source port.)
 
-Not yet tested: SSH-1 (no SSH-1 server to test against), X11 and agent forwarding (not applicable), a real Pi.
+Not yet tested: SSH-1 (no SSH-1 server to test against), X11 forwarding (not applicable), a real Pi. (Agent forwarding is tested: see the key agent, below.)
 
 A **paste** of 2000 lines (10 KB, taken with Copy all from the scrollback and pasted back through `tee`) arrives
 complete and in order.
@@ -326,8 +326,17 @@ The terminal window:
   of them; they join up from cell to cell. Everything else is painted with the Font Manager
   (`\EUTF8` encoding, so characters the font lacks are simply missing).
 - Keys use PuTTY's `format_arrow_key`/`format_function_key`/... helpers. Modifiers are read with
-  `OS_Byte 129` and INKEY numbers (the numbers key events use do not work). Page Up/Down arrive as
-  Shift-Up/Shift-Down codes and are told apart by testing whether the arrow key is physically down.
+  `OS_Byte 129` and INKEY numbers (the numbers key events use do not work). The INKEY number of a key is
+  one more than the scan number `OS_Byte 121` finds for it (Page Up is scan 63, INKEY(-64)); `tests/ro/keyscan.c`
+  prints both for the keys held, and the table in `rowindow.c` once had three of the scan numbers in it.
+  Some keys arrive as the code of another: Page Up/Down as Shift-Up/Shift-Down (and, with Shift held, which
+  cancels that, as plain Up/Down), Home as Ctrl-^ (0x1E, so Ctrl-6 looks like Home). They are told apart by asking
+  whether the real key is down; if the key was let go before we looked, a code with the Shift bit and nothing else
+  is taken for the page key, and Ctrl-^ for Ctrl-^. Shift-Page scrolls the terminal by a page and Ctrl-Page by a
+  line, as PuTTY does; Ctrl-Space is NUL; Ctrl-Shift-C/V copy and paste when "Window > Selection" asks.
+  With Alt (Meta) held the Wimp is told of no key but Tab and Space - not the letters, the cursor, editing or
+  function keys, Backspace, Return or Escape - so `poll_meta` scans the keyboard (every 2 cs) for them and sends
+  Escape and the key's usual sequence when one goes down (each press once: there is no auto-repeat).
 - The mouse uses button type 6 (click/drag); double and triple clicks are timed by us; a held button
   is tracked by polling the pointer each trip round the loop. Select is PuTTY's left button, Adjust
   its right (extend); Menu opens the window menu.
@@ -373,6 +382,11 @@ three uses: the full dialogue from the Connect box (Open starts the session), an
 running session (`apply_settings` in `rowindow.c`, after unix/window.c: log, line discipline, terminal,
 back end, clipboards, font, character set, window size, scroll bar; a change of "Display scrollbar" makes
 a new Wimp window because the bar is a creation flag).
+Controls for settings the port does not act on are left out rather than shown doing nothing
+(`control_is_inert` in `roconfig.c`: "Hide mouse pointer when typing", "Separate window and icon titles" and "Gap
+between text and window edge" - the Wimp has one title and its own window border); a box that is left with
+nothing in it goes too. The settings are still stored in saved sessions, so a session saved by another PuTTY
+keeps them.
 
 Measured in RPCEmu (RISC OS 5.30): the screen is 1600x1200 with one pixel = 2 OS units; Corpus.Medium
 is fixed pitch with an advance of 7200 millipoints at 12 pt (18 OS units; 400 millipoints per OS
@@ -472,7 +486,10 @@ simply in its place and nothing more is sent. Checked in RPCEmu with a Filer dir
 files can be dragged at once: from the done callback of one, `rosave_drop_another` sends the next DataSave to the same
 place. The "save as" box built on this (icon, name, Cancel, Save) opens at the pointer, saves to a typed whole
 pathname if there is one (a bare leaf is refused with the usual advice; an existing file is confirmed), and is used for
-the key files and for a double-clicked remote file. `DI_FILE` in `rodlg` is the draggable icon (an indirected sprite
+the key files and for a double-clicked remote file. A real destination named in a DataSaveAck that already holds a file
+is confirmed too ("The file ... already exists": Overwrite or Cancel, `ask_overwrite`; the question is asynchronous, so
+`xf.asking` keeps another drag out meanwhile); a scrap file (size word -1) is never asked about. The Filer itself does
+not ask. `DI_FILE` in `rodlg` is the draggable icon (an indirected sprite
 icon of button type "click/drag"); a drag arrives at the dialogue's callback as `BTN_DRAG_SELECT`.
 
 ## The file transfer window (`rofiles.c`, `roftp.c`, `rofile.c`)
@@ -504,6 +521,21 @@ asked for it with the desktop kept alive by the wait, so the window can be close
 to stop, and the window goes when it has). Quitting with the connection open asks first, as for a session.
 A connection that drops while the window is idle is noticed by `rofiles_idle` (title "disconnected" and a notice).
 
+The window keeps the whole listing (`fw.all`, which owns the names) and a view of it (`fw.ent`, shallow copies of the entries
+shown, rebuilt by `rebuild_view`) so that hiding dot files and sorting - by name, by size (biggest first) or by date (newest
+first), directories always first - need no new request to the server. Changing either clears the selection and scrolls to
+the top. The two choices are statics (`pref_hide_dots`, `pref_sort`), so they last until the program quits and apply to the
+next window.
+
+The copying that does not go through a save box asks before it replaces a file (`ask_replace`, `confirm_local`): the
+files of "Copy to...", of a directory tree downloaded, and everything uploaded (`ft_stat` finds the remote file). The
+box says what is there and what would replace it (size and date of each) and offers Replace, Replace all (no more
+questions for that lot of copying: `ow.all`, reset when an operation begins and at the start of a queue of dropped
+files), Skip and Cancel; the default and Escape are Cancel. Unlike PuTTY's own questions it is synchronous: it is put
+up with `ro_msgbox` and waited for with `roapp_wait()` inside the operation, which keeps every other operation out
+(`op_begin`) and the desktop going; closing the window meanwhile drops the box (`ro_msgbox_drop_owner`) and cancels.
+Directories that exist are merged into without asking.
+
 The Connect box serves both uses: its File transfer button (or the icon bar's File transfer... item) opens a window
 for the same host, port, login name and key; it asks for the password or host-key confirmation in boxes as a terminal
 would. Only one window is open at a time.
@@ -517,6 +549,63 @@ New directory, Rename, Delete with its confirmation, Cancel of a 95 MB download 
 still good), closing the window during a transfer and during authentication, keyboard-interactive login through
 prompt boxes, a refused connection, the server killed while idle, Quit with a live connection, and the console tools
 re-run afterwards (`tools/sftptest.py`: 43 checks, none failed).
+
+## One copy at a time (`another_copy_running` in `roapp.c`)
+
+A second `!PuTTY` would be a second Wimp task with its own icon, its own windows and (now) its own key agent, which is
+not what anyone double-clicking the application twice wants. So at start-up, straight after `Wimp_Initialise` and before
+anything else is made, a copy broadcasts `MSG_PUTTY_PING` (0x4B7C1, a private user message; the numbers and the magic word
+were already in `rowimp.h`) carrying its command line - the arguments after the program name as NUL-ended strings - and waits
+a third of a second, with null events allowed (they are what ends the wait), for `MSG_PUTTY_PONG`. A running copy answers
+at once and does what the command line says (`other_copy_started`: `start_from_command_line` on the received arguments, or
+the Connect box if there were none), so the new session or the box appears in the copy that is already there, and the copy
+that asked closes its task and exits. Without an answer it carries on as the first copy. A command line too long for one
+message (about 220 bytes) is not sent and that copy runs on its own. A broadcast that nobody answers is never bounced back
+by the Wimp, so "nobody is there" can only be learned by waiting, which costs a third of a second at every cold start. A
+copy that is busy (a key being decrypted keeps the desktop frozen for ten seconds) will not answer in time, and a second
+copy then starts anyway. `PuTTY$AllowSeveral` turns the check off for tests. !PuTTYgen does the same with its own pair of
+messages.
+
+## The key agent (`roagent.c`)
+
+Upstream's `pageant.c` is the agent proper (the key store, the SSH agent protocol, the client-side helpers
+`pageant_add_keyfile`, `pageant_enum_keys`, `pageant_delete_key`); the Unix and Windows ports wrap it in a socket or a
+window message. Here it runs inside the Wimp program, so PuTTY's own connections talk to it directly:
+`roagent.c` defines the four entry points the SSH code expects of a platform's agent client - `agent_exists`
+(true when it holds keys, so an empty agent does not clutter the log with "Pageant has no keys"), `agent_query`,
+`agent_cancel_query`, and `agent_connect` (an error socket, so agent forwarding falls back to upstream's message-at-a-time
+`agentf.c`). `pageant_handle_msg` answers through `got_response` some time later, from a toplevel callback, so a query
+is asynchronous: `agent_query` returns a pending query and a callback of ours (queued from `got_response`, never run
+inside it, because pageant's own clean-up after the response still touches the client) calls the SSH code back.
+`ask_passphrase` is refused: keys are held decrypted, so no request waits for the user.
+
+`pageant.c` is compiled as it stands from the upstream tree, with `-Drandom_read=pageant_random_read_unused` (it defines a
+`random_read` that is fatal, for the stand-alone Pageant, which clashes with `sshrand.c`'s real one), and `aqsync.c` joins the
+core. `pageant_init()` makes the agent "local", and the client helpers then act directly on its key store, in the same
+call (that is how the Keys window lists, adds and removes keys). `keylist_update()` is the hook pageant calls when the key
+list changes; ours refreshes the window.
+
+The window is a `rodlg` dialogue: six rows of tick boxes (a row's label is the key type and size, then the comment) that
+are hidden (`dlg_set_hidden`, which sets the Wimp's "deleted" icon flag - the Wimp neither draws nor notices such an icon)
+when there is no key for them, paging buttons for more than six, the fingerprint of the key last ticked in a field, and
+Add key..., Remove, Remove all, Start-up list... and Close. Adding is `pageant_add_keyfile(fn, NULL, ...)`; it says
+NEED_PP for an encrypted key, then a passphrase box (`ro_prompt`, secret) and a second call with the passphrase; a wrong
+one comes back as NEED_PP again and the box is shown again with "That passphrase was wrong". Passphrases that worked are
+kept by pageant for the next key of the same go, and forgotten when it ends (`pageant_forget_passphrases`). Decrypting a
+`.ppk` version 3 key with Argon2 takes a while with the desktop frozen (about ten seconds in RPCEmu, with 34 passes of
+8 MB) and needs the memory, which `!Run`'s WimpSlot allows. A key file dropped on the window, or on the icon bar icon when
+it is a private key, is added (`roagent_message`).
+
+The start-up list is `<Choices$Write>.PuTTY.AgentKeys`, a text file with one pathname to a line (`#` starts a comment),
+read when the program starts: after the Connect box has opened if no session was asked for on the command line (so a
+passphrase box is above it, not under it), and before the session if one was. The keys are added one at a time - each add
+ends with a queued callback that starts the next - so a passphrase box never competes with another.
+
+Checked in RPCEmu against Uppity: add by typed path, by drop on the window, an encrypted key with a wrong passphrase and
+then the right one, the list and the fingerprint (equal to `puttygen -l`), login with no key file configured
+("Authenticating with public key ... from agent"), agent forwarding (Uppity's agent socket: `ssh-add -l` on the server
+lists the key, and `ssh-keygen -Y sign` through it makes a signature the host verifies), and the start-up list (a key
+needing a passphrase, a key already loaded, a missing file).
 
 ## Not done yet
 

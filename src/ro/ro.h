@@ -63,6 +63,12 @@ bool ro_entropy_is_weak(void);
 bool ro_winpos_get(const char *key, int *x, int *y);
 void ro_winpos_put(const char *key, int x, int y);
 
+/*
+ * The text file naming the private keys the key agent adds at start-up (storage.c); malloc'd.  With
+ * `create` it is made if it does not exist, with a note in it saying what goes there.
+ */
+char *ro_agentkeys_path(bool create);
+
 /* Filetypes the port writes. */
 #define FILETYPE_TEXT 0xFFF
 #define FILETYPE_DATA 0xFFD

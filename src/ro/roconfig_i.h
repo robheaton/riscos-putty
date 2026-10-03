@@ -88,6 +88,7 @@ struct Widget {
     /* the control's value */
     char *label;                    /* current label text (owned) or NULL */
     char *text;                     /* edit box / display text (owned, MAX_TEXT) */
+    bool  hidden;                   /* PuTTY has a control here but it means nothing on RISC OS: no icons, no room */
     bool  checked;
     int   radio;                    /* the selected radio button, -1 for none */
     Entry *ent;                     /* list box / drop-down entries */

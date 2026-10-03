@@ -40,6 +40,8 @@ static struct {
     RoSaveFn   save;
     RoSaveDone done;
     void      *ctx;
+    bool       asking;                  /* the destination exists: the person is being asked whether to overwrite it */
+    char       ask_path[256];
 } xf;
 
 static int name_words(const char *name)
@@ -95,7 +97,7 @@ bool rosave_drag(const char *sprite, const int *from, int source_win, const char
 {
     int box[4];
 
-    if (xf.dragging || xf.ref) return false;
+    if (xf.dragging || xf.ref || xf.asking) return false;
     memcpy(box, from, sizeof box);
     /* DragASprite shows the file's own icon being carried; if it is not there (before RISC OS 3.5),
      * an outline box does. */
@@ -145,7 +147,7 @@ bool rosave_drop_another(const char *leaf, int filetype, RoSaveFn save, RoSaveDo
 {
     wpointer where;
 
-    if (!chain_valid || xf.ref || xf.dragging) return false;
+    if (!chain_valid || xf.ref || xf.dragging || xf.asking) return false;
     where = chain_target;
     chain_valid = false;                                    /* (one more at a time: this call is the next link) */
     snprintf(xf.leaf, sizeof xf.leaf, "%s", leaf && *leaf ? leaf : "Data");
@@ -172,15 +174,46 @@ void rosave_drag_end(wevent *e)
     if (!xf.ref) drag_finished(false);
 }
 
+/* "The file ... already exists": Overwrite or Cancel. */
+static void ask_overwrite(const char *path, RoMsgFn answered, void *ctx)
+{
+    static const char *const buttons[] = { "Overwrite", "Cancel" };
+    char *msg = (char *)malloc(strlen(path) + 40);
+
+    if (!msg) {
+        answered(ctx, 1);
+        return;
+    }
+    sprintf(msg, "The file\n%s\nalready exists.", path);
+    ro_msgbox(NULL, "Save", msg, buttons, 2, 1, 1, answered, ctx);
+    free(msg);
+}
+
+/* The answer about a destination the receiver named. */
+static void drag_overwrite_answered(void *ctx, int button)
+{
+    (void)ctx;
+    if (!xf.asking) return;
+    xf.asking = false;
+    drag_finished(button == 0 && xf.save(xf.ctx, xf.ask_path));
+}
+
 /* The receiver has told us where to put the file. */
 static void saved_where_told(const wmessage *m)
 {
     char path[256];
-    int blk[64], length = 0;
+    int blk[64], length = 0, type;
 
     wimp_msg_path(m, path, sizeof path);
     ro_trace("PuTTYsave$Trace", "DataSaveAck from task %d: size word %d, type %03x, path %s", m->sender, m->data[4],
              m->data[5], path);
+    type = path[0] && m->data[4] != -1 ? object_type(path, NULL) : 0;
+    if (type == 1 || type == 3) {                          /* a real destination with a file in it already (not a scrap file) */
+        xf.asking = true;
+        snprintf(xf.ask_path, sizeof xf.ask_path, "%s", path);
+        ask_overwrite(path, drag_overwrite_answered, NULL);
+        return;
+    }
     if (!path[0] || !xf.save(xf.ctx, path)) {                /* it said what went wrong */
         drag_finished(false);
         return;
@@ -277,17 +310,11 @@ static void save_typed(void)
         return;
     }
     if (type != 0) {
-        static const char *const buttons[] = { "Overwrite", "Cancel" };
         Overwrite *o = (Overwrite *)calloc(1, sizeof *o);
-        char *msg;
         if (!o) return;
         o->generation = generation;
         snprintf(o->path, sizeof o->path, "%s", name);
-        msg = (char *)malloc(strlen(name) + 40);
-        if (!msg) { free(o); return; }
-        sprintf(msg, "The file\n%s\nalready exists.", name);
-        ro_msgbox(NULL, "Save", msg, buttons, 2, 1, 1, overwrite_answered, o);
-        free(msg);
+        ask_overwrite(name, overwrite_answered, o);
         return;
     }
     save_to_path(name);

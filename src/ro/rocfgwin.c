@@ -200,6 +200,7 @@ static void create_widget_icons(dlgparam *dp, Widget *w, int ox, int oy)
     const int x = ox + w->x, y = oy + w->y;
     int i;
 
+    if (w->hidden) return;
     switch (c->type) {
       case CTRL_TEXT: {
         const char *start[24];

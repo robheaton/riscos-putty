@@ -77,6 +77,8 @@ const char *dlg_get_text(dlg *d, int id);
 void        dlg_set_selected(dlg *d, int id, int on);
 int         dlg_get_selected(dlg *d, int id);
 void        dlg_set_shaded(dlg *d, int id, int on);
+/* Hide an item (it is neither drawn nor clickable) or show it again. */
+void        dlg_set_hidden(dlg *d, int id, int on);
 /* The colour a DI_SWATCH shows (0 to 255 each), redrawn at once if it changed. */
 void        dlg_set_swatch(dlg *d, int id, int r, int g, int b);
 /* How full a DI_BAR is, 0 to 1000. */

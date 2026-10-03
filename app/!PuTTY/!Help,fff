@@ -40,14 +40,25 @@ one is needed.  The first time you connect to a computer it shows the host key's
 fingerprint: choose Accept to remember it, or Connect Once to trust it just this
 time.  Adjust-click Open to keep the Connect box on screen.
 
+Starting !PuTTY again while it is running does not make a second copy.  The copy that is running opens
+the Connect box for you (or starts the session, if you started !PuTTY from a command line that names a
+host or a saved session), and the new one goes away.  So there is only ever one PuTTY icon on the icon
+bar, and one set of keys in its agent (see below).
+
 The terminal window
 -------------------
 Select-drag (or double or triple click) selects text, and Adjust-click extends the
 selection.  Selected text is copied to the RISC OS clipboard at once; Shift-Insert
-pastes the clipboard (Ctrl-Insert copies).  Mouse wheel and Shift-Page Up/Down
-scroll back through the output.  A text file dropped on the window is pasted.
-The left Alt key is Meta, as in a Unix terminal (Alt-F sends Escape then F); the right Alt
-key still types the special characters of your keyboard layout.
+pastes the clipboard (Ctrl-Insert copies), and Window > Selection can give Ctrl-Shift-C and
+Ctrl-Shift-V the same jobs.  Mouse wheel and Shift-Page Up/Down scroll back through the
+output a page at a time (Ctrl-Page Up/Down a line).  A text file dropped on the window is pasted.
+
+The left Alt key is Meta, as in a Unix terminal: Alt with a key sends Escape and then what the key
+sends (Alt-F sends Escape then F; Alt-Backspace, which most shells take as "delete the last word", and
+Alt with the cursor, Return and function keys work the same way).  The right Alt key still types the
+special characters of your keyboard layout.  Ctrl-Space sends NUL (Emacs' set-mark) and Ctrl-6 sends
+Ctrl-^ (vim's alternate file).  The numeric keypad sends the same as the keys elsewhere, so the
+keypad modes of Terminal > Keyboard have no effect.
 
 A new window opens where the last window for the same host was closed (and a second one for the same host
 steps aside from the first).  The scroll bar's thumb shows how much scrollback there really is; it gets
@@ -82,11 +93,31 @@ Filer directory display of the other computer, showing each file's name, size, d
         Copy to here...        copy a file or directory (a pathname you type) up to this directory
         New directory..., Rename..., Delete (asks first; directories go with their contents)
         Select all, Clear selection, Parent directory, Home directory, Go to..., Refresh
+        Hide dot files         leave out the names that start with a dot (the menu item then says Show dot files)
+        Sort by                name, size (biggest first) or date (newest first); directories stay first
         Disconnect             close the connection (so does the close icon)
 
 A progress box with a Cancel button shows each copy; Cancel stops it and removes the part-copied file.
+Nothing is replaced without asking: if a file of the same name is there already you are told how big and how
+old each one is, and can Replace it, Replace all (stop asking for this copy), Skip it or Cancel.
 Names and types are converted as for psftp and pscp, below.  Only one file transfer window is open at
 a time.  If the other computer hangs up the title says "disconnected".
+
+The key agent
+-------------
+Keys... on the icon bar menu opens the list of private keys PuTTY is holding for logging in (this is
+what PuTTY calls Pageant).  Add a key (a .ppk file) with Add key..., or by dragging the file onto the
+window or onto PuTTY's icon bar icon; if it has a passphrase you are asked for it, once.  From then on
+every SSH connection PuTTY makes - terminal sessions and the file transfer window - can log in with it
+without asking for the passphrase again.  If a session has "Allow agent forwarding" ticked (Connection >
+SSH > Auth), the computer you have logged in to can also ask the agent to sign for it, to log in to a
+third computer, say; it never sees the keys.
+
+Tick keys and click Remove to take them out of the agent, or Remove all.  The keys are held in PuTTY's
+memory and forgotten when PuTTY quits (the key files are never changed).  To have keys added each time
+PuTTY starts, click Start-up list... and put the pathname of each key file on a line of its own; a key
+with a passphrase asks for it as PuTTY starts.  The agent is inside PuTTY, so it serves only PuTTY's
+own connections, not psftp, pscp or the other programs in Tools.
 
 Random numbers
 --------------

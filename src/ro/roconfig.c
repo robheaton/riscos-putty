@@ -278,6 +278,27 @@ static void measure(Widget *w, int ww)
  * Inside it PuTTY's columns apply as in the other front ends: each control occupies
  * some columns and goes below the lowest thing already in any of them.
  */
+/*
+ * Controls PuTTY offers that cannot do anything on RISC OS, so they are not shown: hiding the mouse
+ * pointer while typing (the Wimp owns the pointer), separate window and icon titles (a Wimp window has
+ * one title), and a gap between the text and the window edge (the text is drawn edge to edge).
+ */
+static bool control_is_inert(const dlgcontrol *c)
+{
+    int id;
+    if (c->type != CTRL_CHECKBOX && c->type != CTRL_EDITBOX) return false;
+    id = c->context.i & ~CHECKBOX_INVERT;
+    return id == CONF_hide_mouseptr || id == CONF_win_name_always || id == CONF_window_border;
+}
+
+static bool set_has_shown_controls(const struct controlset *cs)
+{
+    size_t k;
+    for (k = 0; k < cs->ncontrols; k++)
+        if (!control_is_inert(cs->ctrls[k])) return true;
+    return false;
+}
+
 static void layout_panel(dlgparam *dp, Panel *p, int path_matches_footer)
 {
     struct controlbox *b = dp->ctrlbox;
@@ -293,7 +314,7 @@ static void layout_panel(dlgparam *dp, Panel *p, int path_matches_footer)
         Box *box = NULL;
 
         if (strcmp(cs->pathname, p->path) != 0 || !cs->boxname) continue;
-        if (!cs->ncontrols) continue;
+        if (!cs->ncontrols || !set_has_shown_controls(cs)) continue;
 
         ctrlset_normalise_aligns(cs);
         if (framed) {
@@ -330,6 +351,11 @@ static void layout_panel(dlgparam *dp, Panel *p, int path_matches_footer)
                 continue;
             }
             if (ctl->type == CTRL_TABDELAY) continue;
+            if (control_is_inert(ctl)) {
+                w = new_widget(p, ctl);                  /* PuTTY still talks to it; it just has no icons */
+                w->hidden = true;
+                continue;
+            }
 
             w = new_widget(p, ctl);
             cstart = COLUMN_START(ctl->column);

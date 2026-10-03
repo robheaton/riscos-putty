@@ -44,8 +44,13 @@
 
 enum {                           /* menu items */
     M_DOWNLOAD, M_UPLOAD, M_NEWDIR, M_RENAME, M_DELETE, M_SELALL, M_SELNONE, M_PARENT, M_HOME, M_GOTO,
-    M_REFRESH, M_DISCONNECT
+    M_REFRESH, M_DOTS, M_SORT, M_DISCONNECT
 };
+enum { SORT_NAME, SORT_SIZE, SORT_DATE };
+
+/* How the window shows a directory.  These are kept from one window to the next (until the program quits). */
+static bool pref_hide_dots;      /* leave out the names that start with a dot */
+static int  pref_sort = SORT_NAME;
 
 typedef struct Queued {
     struct Queued *next;
@@ -61,7 +66,9 @@ static struct {
     Conf       *conf;
     FtConn     *conn;
     char       *cwd;             /* the remote directory shown */
-    FtEntry    *ent;             /* its entries: directories first, then by name */
+    FtEntry    *all;             /* its entries as the server listed them (they own their names) */
+    size_t      nall;
+    FtEntry    *ent;             /* the ones shown, directories first: copies of entries of `all`, sharing their names */
     size_t      nent;
     bool       *sel;             /* selected rows */
     bool        has_parent;      /* row 0 is the parent directory */
@@ -180,21 +187,59 @@ static bool row_is_parent(size_t row)
 
 static int row_h(void) { return ROW_H * fw.sy; }
 
-static int cmp_entries(const void *a, const void *b)
+/* Directories first, whatever the order; then by name (ignoring case), or biggest or newest first. */
+static int cmp_name(const void *a, const void *b)
 {
     const FtEntry *x = (const FtEntry *)a, *y = (const FtEntry *)b;
     if (x->dir != y->dir) return x->dir ? -1 : 1;
     return strcasecmp(x->name, y->name);
 }
 
+static int cmp_size(const void *a, const void *b)
+{
+    const FtEntry *x = (const FtEntry *)a, *y = (const FtEntry *)b;
+    if (x->dir != y->dir) return x->dir ? -1 : 1;
+    if (!x->dir && x->size != y->size) return x->size > y->size ? -1 : 1;
+    return strcasecmp(x->name, y->name);
+}
+
+static int cmp_date(const void *a, const void *b)
+{
+    const FtEntry *x = (const FtEntry *)a, *y = (const FtEntry *)b;
+    if (x->dir != y->dir) return x->dir ? -1 : 1;
+    if (x->mtime != y->mtime) return x->mtime > y->mtime ? -1 : 1;
+    return strcasecmp(x->name, y->name);
+}
+
 static void clear_listing(void)
 {
-    ft_free_entries(fw.ent, fw.nent);
+    ft_free_entries(fw.all, fw.nall);
+    fw.all = NULL;
+    fw.nall = 0;
+    sfree(fw.ent);
     fw.ent = NULL;
     fw.nent = 0;
     sfree(fw.sel);
     fw.sel = NULL;
     fw.nrow = 0;
+}
+
+/* Work out which entries to show, and in what order; nothing is selected afterwards. */
+static void rebuild_view(void)
+{
+    size_t i, n = 0;
+
+    sfree(fw.ent);
+    fw.ent = snewn(fw.nall ? fw.nall : 1, FtEntry);
+    for (i = 0; i < fw.nall; i++)
+        if (!(pref_hide_dots && fw.all[i].name[0] == '.'))
+            fw.ent[n++] = fw.all[i];
+    qsort(fw.ent, n, sizeof *fw.ent, pref_sort == SORT_SIZE ? cmp_size : pref_sort == SORT_DATE ? cmp_date : cmp_name);
+    fw.nent = n;
+    fw.nrow = n + (fw.has_parent ? 1 : 0);
+    sfree(fw.sel);
+    fw.sel = snewn(fw.nrow ? fw.nrow : 1, bool);
+    memset(fw.sel, 0, (fw.nrow ? fw.nrow : 1) * sizeof(bool));
 }
 
 static int visible_height(void)
@@ -395,6 +440,83 @@ static bool pd_update(void *ctx, uint64_t done, uint64_t total)
 static const FtProgress progress = { pd_update, NULL };
 
 /* ------------------------------------------------------------------------ */
+/* asking before a file is replaced                                         */
+
+enum { OW_REPLACE, OW_SKIP, OW_CANCEL };
+
+static struct {
+    bool all;                    /* "Replace all" has been chosen for the copying in hand */
+    int  answer;                 /* the button chosen; -1 while the question is up */
+} ow;
+
+static void ow_answered(void *ctx, int button)
+{
+    (void)ctx;
+    ow.answer = button;
+}
+
+/* "3.4 KB, 2 Oct 2026 10:00" - what is known of a file, for the question */
+static void describe(char *buf, size_t cap, const FtEntry *e)
+{
+    char size[32] = "", date[48] = "";
+
+    if (e && e->has_size) fmt_size(size, sizeof size, e->size);
+    if (e && e->has_mtime) fmt_date(date, sizeof date, e->mtime);
+    snprintf(buf, cap, "%s%s%s", size, size[0] && date[0] ? ", " : "", date);
+}
+
+/*
+ * The file `leaf` exists already, on the other computer (`remote`) or here: may it be replaced?  `old` is
+ * what is there and `incoming` what would take its place.  When more files are to come (`several`) the person
+ * may also say "Replace all" (no more questions this time) or "Skip" this one.  This is asked inside an
+ * operation, which keeps any other out meanwhile; the desktop goes on while the box is up.
+ */
+static int ask_replace(const char *leaf, bool remote, const FtEntry *old, const FtEntry *incoming, bool several)
+{
+    static const char *const one[] = { "Replace", "Cancel" };
+    static const char *const many[] = { "Replace", "Replace all", "Skip", "Cancel" };
+    char a[96], b[96], *msg;
+    const int last = several ? 3 : 1;
+    int answer;
+
+    if (ow.all) return OW_REPLACE;
+    describe(a, sizeof a, old);
+    describe(b, sizeof b, incoming);
+    msg = dupprintf("The file %s already exists%s.\n%s%s%s%s%s%s\nReplace it?", leaf,
+                    remote ? " on the other computer" : "",
+                    a[0] ? "\nThe old one: " : "", a, a[0] ? "\n" : "",
+                    b[0] ? "The new one: " : "", b, b[0] ? "\n" : "");
+    ow.answer = -1;
+    ro_msgbox(&fw, "File exists", msg, several ? many : one, last + 1, last, last, ow_answered, NULL);
+    sfree(msg);
+    while (ow.answer < 0 && !fw.closing && roapp_wait())
+        ;
+    if (ow.answer < 0) {                                   /* the window or the program is going */
+        ro_msgbox_drop_owner(&fw);
+        return OW_CANCEL;
+    }
+    answer = ow.answer;
+    if (answer == last) return OW_CANCEL;
+    if (several && answer == 2) return OW_SKIP;
+    if (several && answer == 1) ow.all = true;
+    return OW_REPLACE;
+}
+
+/* May the local file `path` be written?  (It is a question if there is a file there.) */
+static int confirm_local(const char *path, const FtEntry *incoming, bool several)
+{
+    unsigned long size = 0, mtime = 0;
+    FtEntry old;
+
+    if (ro_local_stat(path, NULL, &size, &mtime) != 1) return OW_REPLACE;     /* (a directory fails later) */
+    memset(&old, 0, sizeof old);
+    old.has_size = old.has_mtime = true;
+    old.size = size;
+    old.mtime = mtime;
+    return ask_replace(ro_local_leaf(path), false, &old, incoming, several);
+}
+
+/* ------------------------------------------------------------------------ */
 /* operations                                                               */
 
 static void finish_close(void);
@@ -413,6 +535,7 @@ static bool op_begin(void)
         return false;
     }
     fw.busy = true;
+    if (!fw.in_drain) ow.all = false;                      /* (a run of dropped files is one lot of copying) */
     return true;
 }
 
@@ -433,15 +556,12 @@ static bool install_listing(const char *path, FtEntry *list, size_t n)
 {
     char *where = dupstr(path);                 /* (path may be fw.cwd, which is about to be replaced) */
     clear_listing();
-    qsort(list, n, sizeof *list, cmp_entries);
-    fw.ent = list;
-    fw.nent = n;
+    fw.all = list;
+    fw.nall = n;
     sfree(fw.cwd);
     fw.cwd = where;
     fw.has_parent = strcmp(path, "/") != 0;
-    fw.nrow = n + (fw.has_parent ? 1 : 0);
-    fw.sel = snewn(fw.nrow ? fw.nrow : 1, bool);
-    memset(fw.sel, 0, (fw.nrow ? fw.nrow : 1) * sizeof(bool));
+    rebuild_view();
     return true;
 }
 
@@ -477,6 +597,23 @@ static bool load_dir(const char *path)
     redraw_all();
     op_end();
     return true;
+}
+
+/* The hiding of dot files, or the order, has changed: show the directory again, at the top. */
+static void view_changed(void)
+{
+    wstate st;
+
+    if (fw.win < 0 || !fw.all) return;
+    rebuild_view();
+    set_extent();
+    st.handle = fw.win;
+    if (!_swix(Wimp_GetWindowState, _IN(1), &st)) {
+        st.scroll_y = 0;
+        st.behind = -1;
+        _swix(Wimp_OpenWindow, _IN(1), &st);
+    }
+    redraw_all();
 }
 
 static void go_to(const char *where)
@@ -529,6 +666,7 @@ typedef struct DlJob {
     int offer_type;              /* ... and the one offered with the name (never -1) */
 } DlJob;
 
+/* (The save box and the drag to a directory display have asked already, if there is a file at `local`.) */
 static bool download_one(const char *remote, const char *local, int type, const char *shown)
 {
     char *err = NULL;
@@ -628,15 +766,21 @@ static bool download_tree(const char *remote, const char *local, int *count)
         } else if (list[i].dir) {
             ok = download_tree(r, l, count);
         } else {
+            const int again = confirm_local(l, &list[i], true);
             snprintf(shown, sizeof shown, "%.80s", list[i].name);
             if (pd.d) dlg_set_text(pd.d, P_NAME, shown);
-            err = NULL;
-            ok = ft_download(fw.conn, r, l, -1, &progress, &err);
-            if (!ok) {
-                if (err && strcmp(err, "Cancelled.")) notice("%s", err);
-                sfree(err);
+            if (again == OW_CANCEL) {
+                pd.cancel = true;
+                ok = false;
+            } else if (again == OW_REPLACE) {
+                err = NULL;
+                ok = ft_download(fw.conn, r, l, -1, &progress, &err);
+                if (!ok) {
+                    if (err && strcmp(err, "Cancelled.")) notice("%s", err);
+                    sfree(err);
+                }
+                (*count)++;
             }
-            (*count)++;
         }
         sfree(r);
         sfree(l);
@@ -661,14 +805,22 @@ static void download_selection_to(const char *dir)
         if (e->dir) {                                  /* (a link to a directory, chosen by name, is followed) */
             if (!download_tree(r, l, &count)) { sfree(r); sfree(l); break; }
         } else {
+            const int again = confirm_local(l, e, true);
             if (pd.d) dlg_set_text(pd.d, P_NAME, e->name);
-            if (!ft_download(fw.conn, r, l, -1, &progress, &err)) {
-                if (err && strcmp(err, "Cancelled.")) notice("%s", err);
-                sfree(err);
+            if (again == OW_CANCEL) {
+                pd.cancel = true;
                 sfree(r); sfree(l);
                 break;
             }
-            count++;
+            if (again == OW_REPLACE) {
+                if (!ft_download(fw.conn, r, l, -1, &progress, &err)) {
+                    if (err && strcmp(err, "Cancelled.")) notice("%s", err);
+                    sfree(err);
+                    sfree(r); sfree(l);
+                    break;
+                }
+                count++;
+            }
         }
         sfree(r);
         sfree(l);
@@ -773,8 +925,28 @@ static bool upload_item(const char *local, bool dir, const char *target, int *co
         char *leaf = dupstr(ro_local_path_to_remote_leaf(local));
         char *rpath = ft_join(target, leaf);
         bool ok;
+        FtEntry old;
 
         if (pd.d) dlg_set_text(pd.d, P_NAME, ro_local_leaf(local));
+        if (ft_stat(fw.conn, rpath, &old) && !old.dir) {          /* there is a file there: replace it? */
+            unsigned long size = 0, mtime = 0;
+            FtEntry incoming;
+            int again;
+
+            memset(&incoming, 0, sizeof incoming);
+            if (ro_local_stat(local, NULL, &size, &mtime) == 1) {
+                incoming.has_size = incoming.has_mtime = true;
+                incoming.size = size;
+                incoming.mtime = mtime;
+            }
+            again = ask_replace(leaf, true, &old, &incoming, true);
+            if (again != OW_REPLACE) {
+                sfree(leaf);
+                sfree(rpath);
+                if (again == OW_CANCEL) pd.cancel = true;
+                return again == OW_SKIP;
+            }
+        }
         ok = ft_upload(fw.conn, local, rpath, &progress, &err);
         sfree(leaf);
         sfree(rpath);
@@ -793,6 +965,7 @@ static void drain_queue(void)
     int count = 0;
 
     fw.in_drain = true;
+    ow.all = false;
     while (fw.queue && !fw.closing && fw.win >= 0) {
         Queued *q = fw.queue;
         bool ok;
@@ -1004,13 +1177,23 @@ static void menu_selected(const int *sel)
                   goto_answered, NULL);
         break;
       case M_REFRESH: if (fw.cwd) load_dir(fw.cwd); break;
+      case M_DOTS:
+        pref_hide_dots = !pref_hide_dots;
+        view_changed();
+        break;
+      case M_SORT:
+        if (sel[1] >= SORT_NAME && sel[1] <= SORT_DATE && sel[1] != pref_sort) {
+            pref_sort = sel[1];
+            view_changed();
+        }
+        break;
       case M_DISCONNECT: rofiles_shutdown(); break;
     }
 }
 
 /* The menu is made once and never freed: the Wimp may still be showing it (Adjust keeps a menu open)
  * when the window it belongs to goes. */
-static menu *files_menu;
+static menu *files_menu, *sort_menu;
 
 static void open_menu(int x, int y)
 {
@@ -1032,7 +1215,16 @@ static void open_menu(int x, int y)
         menu_add(files_menu, "Home directory", 0);
         menu_add(files_menu, "Go to...", 0);
         menu_add(files_menu, "Refresh", MF_DOTTED);
+        menu_add(files_menu, "Hide dot files", 0);
+        menu_add(files_menu, "Sort by", MF_DOTTED);
         menu_add(files_menu, "Disconnect", 0);
+        sort_menu = menu_new("Sort by");
+        if (sort_menu) {
+            menu_add(sort_menu, "Name", 0);
+            menu_add(sort_menu, "Size", 0);
+            menu_add(sort_menu, "Date", 0);
+            menu_set_sub(files_menu, M_SORT, sort_menu);
+        }
     }
     for (row = 0; row < fw.nrow; row++)
         if (fw.sel[row] && !row_is_parent(row) && row_entry(row) && !row_entry(row)->dir && nsel == 1)
@@ -1044,6 +1236,12 @@ static void open_menu(int x, int y)
     menu_shade(files_menu, M_SELNONE, nsel == 0);
     menu_shade(files_menu, M_PARENT, !fw.has_parent);
     menu_shade(files_menu, M_NEWDIR, !fw.conn);
+    menu_set_text(files_menu, M_DOTS, pref_hide_dots ? "Show dot files" : "Hide dot files");
+    if (sort_menu) {
+        menu_tick(sort_menu, SORT_NAME, pref_sort == SORT_NAME);
+        menu_tick(sort_menu, SORT_SIZE, pref_sort == SORT_SIZE);
+        menu_tick(sort_menu, SORT_DATE, pref_sort == SORT_DATE);
+    }
     roapp_menu_opened(menu_selected);
     menu_open(files_menu, x - 64, y);
 }

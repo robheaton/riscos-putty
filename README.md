@@ -2,8 +2,8 @@
 
 A native RISC OS port of the PuTTY SSH/Telnet client (upstream 0.85): a terminal
 window that runs in the desktop, with a Connect box and saved sessions, a file transfer
-window, a key generator (`!PuTTYgen`), and the command-line tools plink, puttygen, psftp
-and pscp.
+window, a key agent (PuTTY's Pageant, inside the program), a key generator (`!PuTTYgen`), and the
+command-line tools plink, puttygen, psftp and pscp.
 
 **Status (2026-10-02): usable.** PuTTY's own code (SSH-2 with the hybrid
 NTRU Prime / Curve25519 key exchange, ed25519 and the other host and user key types,
@@ -24,14 +24,19 @@ named sessions; Sessions... lists them. Settings... opens PuTTY's full configura
 (the tree of Session, Terminal, Window, Connection and SSH panels: fonts, colours, keys,
 proxies, tunnels and the rest); its Open button starts the session.
 
+Starting `!PuTTY` again while it is running does not make a second copy: the one running opens the Connect box (or, if
+the command line names a host or a saved session, starts that session) and the new one goes away, so there is one icon
+and one key agent.
+
 Menu on the icon bar icon gives Info (the standard "About this program" box), Help, New session...,
-File transfer..., Sessions (the saved sessions: choose one to connect at once), Key generator... and Quit.
+File transfer..., Sessions (the saved sessions: choose one to connect at once), Keys... (the key agent), Key generator... and Quit.
 
 In the terminal window: select with the mouse (drag, double-click, triple-click;
 Adjust extends); the selection goes straight to the RISC OS clipboard. Shift-Insert
-pastes, Ctrl-Insert copies, and a text file dropped on the window is pasted. The mouse
-wheel, the scroll bar and Shift-Page Up/Down scroll back. The left Alt key is Meta
-(Alt-F sends Escape then F); the right one still composes characters. Menu opens PuTTY's window
+pastes, Ctrl-Insert copies (Ctrl-Shift-C/V too, if Window > Selection says so), and a text file
+dropped on the window is pasted. The mouse wheel, the scroll bar and Shift-Page Up/Down scroll back
+(Ctrl-Page Up/Down a line). The left Alt key is Meta: Alt with any key sends Escape then what the key sends
+(Alt-F, Alt-Backspace, Alt-Left...); the right one still composes characters. Menu opens PuTTY's window
 menu: Copy, Paste, Special command, Event log (what PuTTY is doing, and why a
 connection failed), Change settings (the configuration dialog for the running
 session), Restart session, Reset terminal, Clear scrollback, Duplicate session,
@@ -51,9 +56,17 @@ the same kind of address, but opens a window like a Filer directory display of t
 and permissions, with the sprite for each file's type. Double-click a directory to go into it (the first row is the
 parent). Drag a file (or several selected ones) to a Filer window, or onto an application's icon or window, and
 it is copied there; double-click a file for a save box; Menu on the window has Copy to... (several files or whole
-directories), Copy to here..., New directory, Rename, Delete, Select all, Parent, Home, Go to and Refresh.
+directories), Copy to here..., New directory, Rename, Delete, Select all, Parent, Home, Go to, Refresh, Hide dot files
+and Sort by (name, size or date).
 Drag files from a Filer window onto the window to copy them up (onto a directory's row to put them in it). A
 progress box with a Cancel button shows each copy. Names and filetypes are converted exactly as psftp and pscp do.
+
+**Key agent.** Keys... on the icon bar menu lists the private keys PuTTY is holding for logging in (PuTTY's
+Pageant, which here lives inside the program: it serves PuTTY's own connections, sessions and the file transfer
+window, not the command-line tools). Add a `.ppk` file with Add key... or by dropping it on the window or the icon bar
+icon; a key with a passphrase asks for it once. SSH logins then use the keys without asking for the passphrase, and a
+session with agent forwarding ticked lets the other computer ask the agent to sign for it (it never sees the keys).
+Start-up list... edits a text file of key files to add whenever PuTTY starts. Keys are forgotten when PuTTY quits.
 
 **Key generator.** `!PuTTYgen` (next to `!PuTTY`; PuTTY's Key generator... starts it) makes RSA, DSA, ECDSA and
 EdDSA keys with a progress bar and a Cancel button, loads private keys (PuTTY `.ppk`, OpenSSH, ssh.com: drop the file
@@ -121,6 +134,11 @@ into a PNG. For the console tool, set the system variable `PuTTY$Timeout` (secon
 so a stuck test gives up, and `PuTTY$Trace` (a filename) to log socket events. `PuTTYsave$Trace` (a filename)
 logs what the receiver of a dragged file answers (`ro_trace` in `util.c` is the helper for such hooks), and
 `PuTTY$ForceMouseEntropy` makes the key generator ask for mouse movements even when CryptRandom is there.
+`PuTTY$AllowSeveral` (any value) lets a second copy of the program start instead of handing over to the first, for
+tests that want separate tasks. `PuTTYkey$Trace` (a filename) logs every key event the terminal window receives, with the modifiers, and
+`tests/ro/keyscan.c` (`make tests`) lists the keys the keyboard says are held, which is how the INKEY numbers in
+`rowindow.c` were found. To check what the keys send, run `sh -c 'stty raw -echo; exec cat > keys.bin'` in a session
+and press them with `vncdrive.py` (hold each one for a few tenths of a second: `keydown`, `wait`, `keyup`).
 `VNC_SLOW=3` in the environment of `vncdrive.py` triples its key and button timings, for a busy host.
 
 ## Layout
@@ -135,7 +153,8 @@ logs what the receiver of a dragged file answers (`ro_trace` in `util.c` is the 
   `roconnect.c` (Connect box), `rofont.c`, `rodlg.c`/`rodialog.c`/`romenu.c`/`rowimp.c`
   (dialogue, menu and Wimp helpers), `rofiles.c`/`roftp.c`/`rofile.c` (the file transfer window, its
   SFTP connection, and the local file layer shared with psftp and pscp), `rosave.c` (the save box and the
-  drag-to-save protocol), `rogen.c`/`rokeygen.c` (the key generator) and `roinfo.c` (the Info box).
+  drag-to-save protocol), `roagent.c` (the key agent: glue to upstream's `pageant.c`, and its window),
+  `rogen.c`/`rokeygen.c` (the key generator) and `roinfo.c` (the Info box).
 - `app/!PuTTY/`, `app/!PuTTYgen/` - the application directories' static files (`!PuTTYgen` is built from
   `rogen.c` and `rokeygen.c`; its sprite is drawn by `tools/mksprites.py`).
 - `patches/` - the few lines changed in upstream files (`cmdgen.patch`, `psftp.patch`, `pscp.patch`), applied at build time.
@@ -147,6 +166,8 @@ logs what the receiver of a dragged file answers (`ro_trace` in `util.c` is the 
 - `tools/cryptomatrix.py` - runs every cipher, MAC, key exchange, key type and compression mode
   through plink in RPCEmu against Uppity (see docs/DESIGN.md).
 - `tools/sftptest.py` - runs psftp and pscp in RPCEmu against Uppity (SFTP and SCP, both directions, names, types, dates).
+- `tools/termkeys.py` - holds each special key in a terminal window in RPCEmu and checks the bytes sent
+  (51 keys: cursor, editing and function keys, Shift/Ctrl/Alt combinations, Ctrl-Shift-C/V).
 - `tools/keytest.py` - runs puttygen in RPCEmu against the host's puttygen and OpenSSH: keys generated,
   every key format read and written, editing, errors (see docs/DESIGN.md).
 - `tools/` - test server, deploy, sprite and zip tools.

@@ -30,6 +30,7 @@
 #include "roconfig.h"
 #include "rosave.h"
 #include "rofiles.h"
+#include "roagent.h"
 #include "roinfo.h"
 #include "roversion.h"
 
@@ -45,7 +46,7 @@ static menu *iconbar_menu;
 static const int wanted_messages[] = {
     MSG_PALETTE_CHANGE, MSG_MODE_CHANGE, MSG_CLAIM_ENTITY, MSG_DATA_REQUEST, MSG_DATA_SAVE,
     MSG_DATA_SAVE_ACK, MSG_DATA_LOAD, MSG_DATA_LOAD_ACK, MSG_RAM_FETCH, MSG_RAM_TRANSMIT,
-    MSG_RELEASE_ENTITY, MSG_MENUS_DELETED, MSG_HELP_REQUEST, 0
+    MSG_RELEASE_ENTITY, MSG_MENUS_DELETED, MSG_HELP_REQUEST, MSG_PUTTY_PING, MSG_PUTTY_PONG, 0
 };
 
 /* ------------------------------------------------------------------------ */
@@ -157,6 +158,7 @@ void cleanup_exit(int code)
 {
     sk_cleanup();
     random_save_seed();
+    roagent_shutdown();
     roclip_shutdown();
     closedown();
     exit(code);
@@ -199,7 +201,7 @@ void roapp_menu_opened(RoMenuHandler handler)
  * The icon bar menu follows the usual RISC OS pattern: Info first (its submenu is the
  * "About this program" window), then Help, the application's own entries, and Quit.
  */
-enum { IB_INFO, IB_HELP, IB_NEW, IB_FILES, IB_SESSIONS, IB_KEYGEN, IB_QUIT };
+enum { IB_INFO, IB_HELP, IB_NEW, IB_FILES, IB_SESSIONS, IB_KEYS, IB_KEYGEN, IB_QUIT };
 
 static dlg   *d_info;
 static menu  *sessions_menu;           /* the saved sessions, as the Sessions submenu shows them */
@@ -222,6 +224,7 @@ static void build_menus(void)
     menu_add(iconbar_menu, "New session...", 0);
     menu_add(iconbar_menu, "File transfer...", 0);
     menu_add(iconbar_menu, "Sessions", 0);
+    menu_add(iconbar_menu, "Keys...", 0);
     menu_add(iconbar_menu, "Key generator...", 0);
     menu_add(iconbar_menu, "Quit", 0);
 }
@@ -359,6 +362,9 @@ static void iconbar_selection(const int *sel)
         if (sel[1] >= 0 && sel[1] < nsessions)
             roconnect_start_session(session_names[sel[1]]);
         break;
+      case IB_KEYS:
+        roagent_open();
+        break;
       case IB_KEYGEN:
         run_keygen();
         break;
@@ -390,12 +396,50 @@ static const char *help_for(int win, int icon)
     if ((text = rofiles_help(win, icon)) != NULL) return text;
     if (win == -2)
         return "PuTTY. Click to open the Connect box and start a session. "
-               "Menu gives the PuTTY menu.";
+               "Menu gives the PuTTY menu. Drop a private key file (.ppk) here to add it to the key agent.";
     if (roterm_from_window(win))
         return "A PuTTY terminal: type to send to the computer you are logged in to. "
                "Select-drag selects text and copies it; Shift-Insert pastes it. "
                "Menu gives Copy, Paste, Special command, Event log, Change settings and more.";
     return NULL;
+}
+
+/* ------------------------------------------------------------------------ */
+/* a second copy                                                            */
+
+static bool start_from_command_line(int argc, char **argv);
+
+/*
+ * Starting !PuTTY while it is running would give a second task with its own icon and its own keys, so a copy
+ * that finds another running (see another_copy_running) hands it the command line and goes away.  We answer,
+ * then do what the command line says as if we had been started with it: a session if it names a host, else the
+ * Connect box (which is what a second double-click on !PuTTY ought to show).
+ */
+static void other_copy_started(const wmessage *m)
+{
+    int blk[5], i, n = m->data[1], argc = 1;
+    const char *p = (const char *)&m->data[2], *end = (const char *)m + (m->size < (int)sizeof *m ? m->size : (int)sizeof *m);
+    char *args[32];
+
+    if (m->data[0] != PUTTY_PING_MAGIC) return;
+    memset(blk, 0, sizeof blk);
+    blk[0] = 20;
+    blk[3] = m->my_ref;
+    blk[4] = MSG_PUTTY_PONG;
+    _swix(Wimp_SendMessage, _INR(0, 2), 17, blk, m->sender);
+
+    args[0] = dupstr("putty");
+    for (i = 0; i < n && argc < 31 && p < end; i++) {
+        const char *nul = (const char *)memchr(p, '\0', (size_t)(end - p));
+        if (!nul) break;                                    /* not terminated inside the message */
+        args[argc++] = dupstr(p);
+        p = nul + 1;
+    }
+    if (argc == 1)
+        roapp_connect_dialog();
+    else
+        start_from_command_line(argc, args);
+    for (i = 0; i < argc; i++) sfree(args[i]);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -451,7 +495,7 @@ static void dispatch(int event, wevent *e)
       case EV_MESSAGE:
       case EV_MESSAGE_RECORDED:
         if (rosave_message(&e->msg) || rofiles_message(&e->msg) || roconnect_message(&e->msg) ||
-            roconfig_message(&e->msg) || roclip_message(&e->msg))
+            roconfig_message(&e->msg) || roagent_message(&e->msg) || roclip_message(&e->msg))
             break;
         switch (e->msg.action) {
           case MSG_QUIT:
@@ -468,6 +512,9 @@ static void dispatch(int event, wevent *e)
             break;
           case MSG_HELP_REQUEST:
             wimp_help_reply(&e->msg, help_for(e->msg.data[3], e->msg.data[4]));
+            break;
+          case MSG_PUTTY_PING:
+            other_copy_started(&e->msg);
             break;
           case MSG_SHUTDOWN:
             break;
@@ -657,6 +704,48 @@ static bool start_from_command_line(int argc, char **argv)
     return roterm_new(conf) != NULL;
 }
 
+/*
+ * Is another copy of the program running?  Broadcast what we were asked to do (the command line, as a list of
+ * NUL-ended strings) and see whether a reply comes back within a third of a second.  (A broadcast that nobody
+ * answers is never bounced back by the Wimp, so there is no telling "nobody is there" except by waiting.)  If the
+ * command line is too long for a message the copy stays and does the job itself.
+ */
+static bool another_copy_running(int argc, char **argv)
+{
+    int blk[64], block[64], event, i;
+    char *p = (char *)&blk[7];
+    size_t room = sizeof blk - 28 - 1;
+    const uint32_t until = ro_time() + 30;
+
+    memset(blk, 0, sizeof blk);
+    blk[4] = MSG_PUTTY_PING;
+    blk[5] = PUTTY_PING_MAGIC;
+    blk[6] = argc - 1;
+    for (i = 1; i < argc; i++) {
+        const size_t len = strlen(argv[i]) + 1;
+        if (len > room) return false;
+        memcpy(p, argv[i], len);
+        p += len;
+        room -= len;
+    }
+    blk[0] = (int)(((size_t)(p - (char *)blk) + 3) & ~(size_t)3);
+    if (_swix(Wimp_SendMessage, _INR(0, 2), 17, blk, 0)) return false;
+    while ((int32_t)(until - ro_time()) > 0) {
+        event = 0;
+        /* (null events must be allowed: they are what end the wait at `until`) */
+        if (_swix(Wimp_PollIdle, _INR(0, 3) | _OUT(0), 0, block, (int)until, 0, &event)) return false;
+        if (event == EV_MESSAGE || event == EV_MESSAGE_RECORDED) {
+            const wmessage *m = &((wevent *)block)->msg;
+            if (m->action == MSG_PUTTY_PONG) return true;
+            if (m->action == MSG_QUIT) {
+                quit_requested = true;
+                return false;
+            }
+        }
+    }
+    return false;
+}
+
 int main(int argc, char **argv)
 {
     _kernel_oserror *e;
@@ -667,11 +756,16 @@ int main(int argc, char **argv)
         fprintf(stderr, "Cannot start: %s\n", e->errmess);
         return 1;
     }
+    if (!getenv("PuTTY$AllowSeveral") && another_copy_running(argc, argv)) {   /* (the variable is for testing) */
+        closedown();
+        return 0;
+    }
 
     settings_set_default_protocol(be_default_protocol);
     settings_set_default_port(22);
     roclip_init(task_handle);
     roclip_set_paste(&term_clip);
+    roagent_init();
     sk_init();
     uxsel_init();
     build_menus();
@@ -682,8 +776,10 @@ int main(int argc, char **argv)
         wimp_create_icon_iconbar(IF_TEXT | IF_HCENTRED | IF_BORDER | IF_FILLED |
                                  IF_BUTTON(BT_CLICK) | IF_FG(7) | IF_BG(1), "", APP_NAME, 100);
 
+    if (argc > 1) roagent_load_startup();              /* (a session named on the command line may want the keys) */
     start_from_command_line(argc, argv);
     if (!roterm_first()) roapp_connect_dialog();       /* nothing to connect to yet: ask */
+    if (argc <= 1) roagent_load_startup();             /* (after the Connect box, so that a passphrase box is above it) */
 
     while (!quit_requested)
         poll_once(POLL_NORMAL);
