@@ -1427,9 +1427,11 @@ static void mouse_track(RoTerm *t)
 
 void roterm_scroll_request(RoTerm *t, wevent *e)
 {
-    /* block: window, visible x0 y0 x1 y1, scroll x y, behind, flags, then the
-     * directions: -2 page down, -1 step down, +1 step up, +2 page up */
-    const int dir = e->words[10];
+    /* The block is the Open_Window_Request's - window, visible area x0 y0 x1 y1, scroll x y, the window to go behind -
+     * followed by the directions: x at +32 and y at +36 (words 8 and 9; measured by tracing the events: we used to read
+     * word 10, which is whatever the last event left there, so the arrows and the page clicks of the scroll bar did
+     * nothing).  For y: -2 page down, -1 step down, +1 step up, +2 page up. */
+    const int dir = e->words[9];
     int lines = 0;
     if (!t->term) return;
     if (dir == 1) lines = -SCROLL_LINES;

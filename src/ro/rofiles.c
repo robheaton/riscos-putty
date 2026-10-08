@@ -31,7 +31,7 @@
 #include "roftp.h"
 #include "rofiles.h"
 
-/* ---- geometry, in pixels (scaled to OS units by the mode's eigen factors) ---- */
+/* ---- geometry, in design pixels (UI_PX OS units each, whatever the mode: see rowimp.h) ---- */
 #define ROW_H        22
 #define X_ICON        6
 #define X_NAME       30
@@ -61,7 +61,7 @@ typedef struct Queued {
 
 static struct {
     int         win;             /* the Wimp window, -1 if there is none */
-    int         sx, sy;          /* OS units per pixel */
+    int         sx, sy;          /* OS units per design pixel (UI_PX) */
     char        title[256];
     Conf       *conf;
     FtConn     *conn;
@@ -1364,16 +1364,21 @@ int rofiles_event_open(wevent *e)
 int rofiles_event_scroll(wevent *e)
 {
     wstate s;
-    const int dir = e->words[10];
-    int visible_h;
+    const int xdir = e->words[8], dir = e->words[9];            /* (+32 and +36: see roterm_scroll_request) */
+    int visible_h, visible_w;
 
     if (fw.win < 0 || e->words[0] != fw.win) return 0;
     memcpy(&s, e->words, sizeof s);
     visible_h = s.visible.y1 - s.visible.y0;
+    visible_w = s.visible.x1 - s.visible.x0;
     if (dir == 1) s.scroll_y += 3 * row_h();
     else if (dir == -1) s.scroll_y -= 3 * row_h();
     else if (dir == 2) s.scroll_y += visible_h - row_h();
     else if (dir == -2) s.scroll_y -= visible_h - row_h();
+    if (xdir == 1) s.scroll_x += 40 * fw.sx;                /* (the columns: a window narrower than they are, on a small screen) */
+    else if (xdir == -1) s.scroll_x -= 40 * fw.sx;
+    else if (xdir == 2) s.scroll_x += visible_w - 40 * fw.sx;
+    else if (xdir == -2) s.scroll_x -= visible_w - 40 * fw.sx;
     _swix(Wimp_OpenWindow, _IN(1), &s);
     return 1;
 }
@@ -1446,22 +1451,28 @@ static int mode_var(int var, int dflt)
 static int create_window(void)
 {
     wdef w;
-    int handle = -1, sw, sh, x0, y1;
+    int handle = -1, sw, sh, x0, y1, vis_w, vis_h;
 
-    fw.sx = 1 << mode_var(4, 1);
-    fw.sy = 1 << mode_var(5, 1);
+    fw.sx = fw.sy = UI_PX;
     sw = (mode_var(11, 1599) + 1) << mode_var(4, 1);
     sh = (mode_var(12, 1199) + 1) << mode_var(5, 1);
-    x0 = (sw - WIN_W * fw.sx) / 2;
+    /* WIN_W by WIN_H design pixels, or what the screen has room for (the scroll bars at the side and below, the title
+     * bar above, a margin); the columns can be scrolled to when the window is narrower than they are. */
+    vis_w = WIN_W * fw.sx;
+    vis_h = WIN_H * fw.sy;
+    if (vis_w > sw - 80) vis_w = sw - 80;
+    if (vis_h > sh - 182) vis_h = sh - 182;
+    x0 = (sw - vis_w - 40) / 2;
     y1 = sh - 160;
+    if (y1 - vis_h < 40) y1 = vis_h + 40;                     /* (clear of the bottom: the scroll bar is under the window) */
 
     memset(&w, 0, sizeof w);
     w.visible.x0 = x0;
-    w.visible.x1 = x0 + WIN_W * fw.sx;
+    w.visible.x1 = x0 + vis_w;
     w.visible.y1 = y1;
-    w.visible.y0 = y1 - WIN_H * fw.sy;
+    w.visible.y0 = y1 - vis_h;
     w.behind = -1;
-    w.flags = WF_MOVEABLE | WF_BACK_ICON | WF_CLOSE_ICON | WF_TITLE_BAR | WF_TOGGLE_ICON | WF_VSCROLL |
+    w.flags = WF_MOVEABLE | WF_BACK_ICON | WF_CLOSE_ICON | WF_TITLE_BAR | WF_TOGGLE_ICON | WF_VSCROLL | WF_HSCROLL |
               WF_SIZE_ICON | WF_NEW_FORMAT | WF_SCROLL_REQUEST;
     w.title_fg = 7; w.title_bg = 2;
     w.work_fg = 7;  w.work_bg = 1;

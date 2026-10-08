@@ -10,7 +10,7 @@ interpreter so the DES library is available:
 
 Commands (one per argument, or one per line on stdin; '#' starts a comment):
     shot FILE                  save the screen as a PNG
-    move X Y                   move the pointer
+    move X Y                   move the pointer (pixel position; see VNC_EIG0 for a mode with 1 OS unit to a pixel)
     down BTN / up BTN          hold / release a button   (select, adjust, menu)
     click X Y [BTN [COUNT]]    press and release (COUNT 2 = double click)
     drag X1 Y1 X2 Y2 [BTN]     press at 1, move in steps, release at 2
@@ -37,6 +37,12 @@ BTN = {"select": 1, "adjust": 2, "menu": 4}
 # Keys and buttons are held and spaced for a time the emulated machine can keep up with; when the host is busy
 # (a big compile) it needs longer: VNC_SLOW=3 triples every such time.
 SLOW = float(os.environ.get("VNC_SLOW", "1"))
+# RPCEmu turns the pointer position it is sent into RISC OS coordinates as if the screen mode had 2 OS units to a
+# pixel (eigen factors 1,1), whatever the mode is.  In a mode with 1 OS unit to a pixel (a "180 dpi" mode: EX0 EY0) the
+# desktop therefore sees the pointer at twice the distance from the bottom left corner that the picture shows, and the
+# top half of the screen cannot be reached.  VNC_EIG0=1 makes every position given to move, click and drag a pixel
+# position in such a mode, and sends the VNC position that puts the desktop's pointer there (x/2, and y measured from the
+# bottom likewise halved).
 KEYS = {
     "return": 0xFF0D, "escape": 0xFF1B, "tab": 0xFF09, "backspace": 0xFF08, "delete": 0xFFFF,
     "left": 0xFF51, "up": 0xFF52, "right": 0xFF53, "down": 0xFF54, "home": 0xFF50, "end": 0xFF57,
@@ -65,6 +71,9 @@ def keysym(name):
     raise SystemExit("unknown key %r" % name)
 
 
+EIG0 = os.environ.get("VNC_EIG0", "") not in ("", "0")
+
+
 class Drive:
     def __init__(self):
         self.s, self.w, self.h = m._vnc_connect()
@@ -74,7 +83,10 @@ class Drive:
         self.x = self.x if x is None else x
         self.y = self.y if y is None else y
         self.mask = self.mask if mask is None else mask
-        m._vnc_pointer(self.s, self.x, self.y, self.mask)
+        px, py = self.x, self.y
+        if EIG0:
+            px, py = px // 2, self.h - (self.h - py) // 2
+        m._vnc_pointer(self.s, px, py, self.mask)
 
     def key(self, sym, down):
         self.s.sendall(struct.pack(">BBHI", 4, 1 if down else 0, 0, sym))

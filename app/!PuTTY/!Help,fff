@@ -45,6 +45,14 @@ the Connect box for you (or starts the session, if you started !PuTTY from a com
 host or a saved session), and the new one goes away.  So there is only ever one PuTTY icon on the icon
 bar, and one set of keys in its agent (see below).
 
+Screen modes
+------------
+PuTTY's windows are the same size in every screen mode (they are laid out in OS units, as the Filer's are),
+so they look right in a 180 dpi mode, where a pixel is one OS unit, as in a 90 dpi one.  On a small screen
+the biggest ones - the configuration window, the key generator - are cut down to fit and have scroll bars.
+The terminal window is as many columns and rows of the font as you ask for (Window > Columns and Rows,
+and the font in Window > Appearance), so use a smaller font or fewer columns if it is too big for your screen.
+
 The terminal window
 -------------------
 Select-drag (or double or triple click) selects text, and Adjust-click extends the
@@ -96,6 +104,8 @@ Filer directory display of the other computer, showing each file's name, size, d
         Hide dot files         leave out the names that start with a dot (the menu item then says Show dot files)
         Sort by                name, size (biggest first) or date (newest first); directories stay first
         Disconnect             close the connection (so does the close icon)
+
+The window has scroll bars both ways, so on a small screen the columns can be scrolled to.
 
 A progress box with a Cancel button shows each copy; Cancel stops it and removes the part-copied file.
 Nothing is replaced without asking: if a file of the same name is there already you are told how big and how

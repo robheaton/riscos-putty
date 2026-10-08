@@ -12,7 +12,9 @@
 struct dlg {
     struct dlg  *next;
     int          win;
-    int          w, h;
+    int          w, h;                /* the work area, OS units */
+    int          vis_w, vis_h;        /* the part shown: less than that if the screen is too small (scroll bars then) */
+    int          vbar, hbar;          /* the room the scroll bars take at the side and below, OS units (0: none) */
     int          n;
     int          icon[MAX_ITEMS];
     int          type[MAX_ITEMS];
@@ -133,6 +135,59 @@ static int mode_var(int var, int dflt)
     return v;
 }
 
+/* The screen's size in OS units. */
+static void screen_os(int *w, int *h)
+{
+    int v;
+    *w = 3200; *h = 2400;
+    if (!_swix(OS_ReadModeVariable, _INR(0, 1) | _OUT(2), -1, 11, &v)) *w = (v + 1) << mode_var(4, 1);
+    if (!_swix(OS_ReadModeVariable, _INR(0, 1) | _OUT(2), -1, 12, &v)) *h = (v + 1) << mode_var(5, 1);
+}
+
+/*
+ * A window as big as the dialogue wants, but not bigger than the screen: if the dialogue does not fit, the part shown
+ * is cut down and the window gets scroll bars.  The room it needs is the work area, a title bar above it (42 OS
+ * units) and, if there is one, a scroll bar below (40) and at the side (40); it may cover the icon bar, as a window
+ * can.  Dialogues are about 1000 OS units across and 400 to 800 high, so this matters only in a mode of a thousand
+ * OS units or fewer - a 180 dpi mode of a small display - and every dialogue gets it for nothing.
+ */
+#define TITLE_H  42
+#define BAR_W    40
+
+void dlg_fit_to_screen(int w, int h, int *vis_w, int *vis_h, int *vbar, int *hbar)
+{
+    int sw, sh, aw, ah;
+    bool vs = false, hs = false, changed;
+
+    screen_os(&sw, &sh);
+    aw = sw;
+    ah = sh - TITLE_H;
+    do {                                     /* (each bar takes room that may make the other necessary) */
+        changed = false;
+        if (!vs && h > ah) { vs = true; aw -= BAR_W; changed = true; }
+        if (!hs && w > aw) { hs = true; ah -= BAR_W; changed = true; }
+    } while (changed);
+    *vis_w = w > aw ? aw : w;
+    *vis_h = h > ah ? ah : h;
+    *vbar = vs ? BAR_W : 0;
+    *hbar = hs ? BAR_W : 0;
+}
+
+/* Where a window of `vis_w` by `vis_h` (and its scroll bars) goes to be in the middle of the screen, `lift` OS units above
+ * the centre, with its title bar and scroll bars on the screen. */
+void dlg_centre(int vis_w, int vis_h, int vbar, int hbar, int lift, wbox *out)
+{
+    int sw, sh;
+    screen_os(&sw, &sh);
+    out->x0 = (sw - vis_w - vbar) / 2;
+    if (out->x0 < 0) out->x0 = 0;
+    out->x1 = out->x0 + vis_w;
+    out->y1 = (sh + vis_h) / 2 + lift;
+    if (out->y1 > sh - TITLE_H) out->y1 = sh - TITLE_H;                  /* (the title bar is above the work area) */
+    if (out->y1 - vis_h < hbar) out->y1 = vis_h + hbar;                  /* (and a scroll bar below it) */
+    out->y0 = out->y1 - vis_h;
+}
+
 dlg *dlg_new(const char *title, int w_px, int h_px, const dlg_item *items, int n,
              dlg_click_fn cb, void *ud)
 {
@@ -145,14 +200,17 @@ dlg *dlg_new_style(int style, const char *title, int w_px, int h_px, const dlg_i
     dlg *d = (dlg *)calloc(1, sizeof *d);
     wdef wd;
     int handle = -1, i;
-    /* Layouts are written in pixels (the system font is 8 px per character at
-     * any density); scale to OS units with the current eigen factors. */
-    const int sx = 1 << mode_var(4, 1), sy = 1 << mode_var(5, 1);
+    /* Layouts are written in design pixels (the desktop font is about 8 of them to a character), each UI_PX
+     * OS units in every mode: see rowimp.h. */
+    const int sx = UI_PX, sy = UI_PX;
     const int w = w_px * sx, h = h_px * sy;
 
     if (!d || n > MAX_ITEMS) { free(d); return NULL; }
     d->w = w;
     d->h = h;
+    d->vis_w = w;
+    d->vis_h = h;
+    if (style != DLG_MENU) dlg_fit_to_screen(w, h, &d->vis_w, &d->vis_h, &d->vbar, &d->hbar);
     d->cb = cb;
     d->ud = ud;
     d->default_id = d->escape_id = d->close_id = -1;
@@ -162,11 +220,12 @@ dlg *dlg_new_style(int style, const char *title, int w_px, int h_px, const dlg_i
 
     memset(&wd, 0, sizeof wd);
     wd.visible.x0 = 400; wd.visible.y0 = 400;
-    wd.visible.x1 = 400 + w; wd.visible.y1 = 400 + h;
+    wd.visible.x1 = 400 + d->vis_w; wd.visible.y1 = 400 + d->vis_h;
     wd.behind = -1;
     wd.flags = (style == DLG_MENU)
         ? (WF_AUTO_REDRAW | WF_TITLE_BAR | WF_NEW_FORMAT)
-        : (WF_MOVEABLE | WF_AUTO_REDRAW | WF_BACK_ICON | WF_CLOSE_ICON | WF_TITLE_BAR | WF_NEW_FORMAT);
+        : (WF_MOVEABLE | WF_AUTO_REDRAW | WF_BACK_ICON | WF_CLOSE_ICON | WF_TITLE_BAR | WF_NEW_FORMAT |
+           (d->hbar ? WF_HSCROLL : 0) | (d->vbar ? WF_VSCROLL : 0));
     if (d->own_redraw)
         wd.flags &= ~WF_AUTO_REDRAW;               /* we get the redraw requests, the Wimp still draws the icons */
     wd.title_fg = 7; wd.title_bg = 2; wd.work_fg = 7; wd.work_bg = 1;
@@ -268,24 +327,14 @@ static void caret_to(dlg *d, int idx)
 void dlg_open(dlg *d)
 {
     wstate s;
-    int scr_w = 0, scr_h = 0, xe = 1, ye = 1, v;
 
     if (!d) return;
-    if (!_swix(OS_ReadModeVariable, _INR(0, 1) | _OUT(2), -1, 11, &v)) scr_w = v + 1;
-    if (!_swix(OS_ReadModeVariable, _INR(0, 1) | _OUT(2), -1, 12, &v)) scr_h = v + 1;
-    if (!_swix(OS_ReadModeVariable, _INR(0, 1) | _OUT(2), -1, 4, &v)) xe = v;
-    if (!_swix(OS_ReadModeVariable, _INR(0, 1) | _OUT(2), -1, 5, &v)) ye = v;
-
     memset(&s, 0, sizeof s);
     s.handle = d->win;
     if (d->open && !_swix(Wimp_GetWindowState, _IN(1), &s)) {
         s.behind = -1;                          /* just bring it to the front */
     } else {
-        int sw = scr_w << xe, sh = scr_h << ye;
-        s.visible.x0 = (sw - d->w) / 2;
-        s.visible.x1 = s.visible.x0 + d->w;
-        s.visible.y1 = (sh + d->h) / 2 + 80;
-        s.visible.y0 = s.visible.y1 - d->h;
+        dlg_centre(d->vis_w, d->vis_h, d->vbar, d->hbar, 80, &s.visible);
         s.behind = -1;
     }
     _swix(Wimp_OpenWindow, _IN(1), &s);
@@ -293,18 +342,20 @@ void dlg_open(dlg *d)
     caret_to(d, first_field(d));
 }
 
-/* Where a window `w` by `h` wide should go to be centred on (x, y) and wholly on the screen. */
-static void place_at(int w, int h, int x, int y, wbox *out)
+/* Where a window `w` by `h` (plus `vbar` and `hbar` of scroll bars) should go to be centred on (x, y) and wholly on the screen. */
+static void place_at(int w, int h, int vbar, int hbar, int x, int y, wbox *out)
 {
     int v, scr_w = 0, scr_h = 0;
     if (!_swix(OS_ReadModeVariable, _INR(0, 1) | _OUT(2), -1, 11, &v)) scr_w = (v + 1) << mode_var(4, 1);
     if (!_swix(OS_ReadModeVariable, _INR(0, 1) | _OUT(2), -1, 12, &v)) scr_h = (v + 1) << mode_var(5, 1);
     out->x0 = x - w / 2;
     out->y1 = y + h / 2;
-    if (scr_w > 0 && out->x0 + w > scr_w) out->x0 = scr_w - w;
+    if (scr_w > 0 && out->x0 + w + vbar > scr_w) out->x0 = scr_w - w - vbar;
     if (out->x0 < 0) out->x0 = 0;
     if (scr_h > 0 && out->y1 > scr_h - 80) out->y1 = scr_h - 80;     /* (clear of the title bar's top) */
     if (out->y1 - h < 96) out->y1 = 96 + h;                           /* (and of the icon bar) */
+    if (scr_h > 0 && out->y1 > scr_h - TITLE_H) out->y1 = scr_h - TITLE_H;   /* (but the title bar must be on the screen) */
+    if (out->y1 - h < hbar) out->y1 = h + hbar;                       /* (and a scroll bar under the window) */
     out->x1 = out->x0 + w;
     out->y0 = out->y1 - h;
 }
@@ -316,7 +367,7 @@ void dlg_open_at(dlg *d, int x, int y)
     if (d->open) { dlg_open(d); return; }
     memset(&s, 0, sizeof s);
     s.handle = d->win;
-    place_at(d->w, d->h, x, y, &s.visible);
+    place_at(d->vis_w, d->vis_h, d->vbar, d->hbar, x, y, &s.visible);
     s.behind = -1;
     _swix(Wimp_OpenWindow, _IN(1), &s);
     d->open = 1;

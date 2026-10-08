@@ -140,6 +140,10 @@ tests that want separate tasks. `PuTTYkey$Trace` (a filename) logs every key eve
 `rowindow.c` were found. To check what the keys send, run `sh -c 'stty raw -echo; exec cat > keys.bin'` in a session
 and press them with `vncdrive.py` (hold each one for a few tenths of a second: `keydown`, `wait`, `keyup`).
 `VNC_SLOW=3` in the environment of `vncdrive.py` triples its key and button timings, for a busy host.
+The windows are the same size in OS units in every screen mode; to check a 180 dpi style one (one OS unit to the
+pixel) in the emulator, `WimpMode X1600 Y1200 C16M EX0 EY0`, start PuTTY, and run `vncdrive.py` with `VNC_EIG0=1`
+(RPCEmu delivers the pointer position as if the mode had two OS units to the pixel, so without it clicks go astray; see
+docs/DESIGN.md). `tests/ro/modeinfo.c` and `tests/ro/ptrinfo.c` print the mode and where the system thinks the pointer is.
 
 ## Layout
 

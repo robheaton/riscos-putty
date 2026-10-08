@@ -61,7 +61,7 @@ static CfgIcon *make_icon(dlgparam *dp, Widget *wd, int role, int arg, unsigned 
 {
     struct { int win; idef icon; } blk;
     CfgIcon *ci = new_cfgicon(wd);
-    const int sx = 1 << xeig, sy = 1 << yeig;
+    const int sx = UI_PX, sy = UI_PX;
     int handle = -1;
 
     ci->role = role;
@@ -372,7 +372,8 @@ int roconfig_event_redraw(wevent *e)
     wdraw *r = (wdraw *)e->words;
     int more = 0, x, y, w, h, rgb[3];
     bool paint;
-    const int sx = 1 << xeig, sy = 1 << yeig;
+    const int sx = UI_PX, sy = UI_PX, ix = 3 << mode_var(4, 1), iy = 3 << mode_var(5, 1);   /* (the inset is three real
+                                                                                               * pixels, inside the bevel) */
 
     if (!dp) return 0;
     if (_swix(Wimp_RedrawWindow, _IN(1) | _OUT(0), r, &more)) return 1;
@@ -382,8 +383,8 @@ int roconfig_event_redraw(wevent *e)
             const int ox = r->visible.x0 - r->scroll_x, oy = r->visible.y1 - r->scroll_y;
             const unsigned col = ((unsigned)rgb[2] << 24) | ((unsigned)rgb[1] << 16) | ((unsigned)rgb[0] << 8);
             _swix(ColourTrans_SetGCOL, _IN(0) | _INR(3, 4), col, 0, 0);
-            _swix(OS_Plot, _INR(0, 2), 4, ox + (x + 3) * sx, oy - (y + h - 3) * sy);
-            _swix(OS_Plot, _INR(0, 2), 0x65, ox + (x + w - 3) * sx - 1, oy - (y + 3) * sy - 1);
+            _swix(OS_Plot, _INR(0, 2), 4, ox + x * sx + ix, oy - (y + h) * sy + iy);
+            _swix(OS_Plot, _INR(0, 2), 0x65, ox + (x + w) * sx - ix - 1, oy - y * sy - iy - 1);
         }
         if (_swix(Wimp_GetRectangle, _IN(1) | _OUT(0), r, &more)) break;
     }
@@ -464,7 +465,7 @@ void cfgwin_update_label(dlgparam *dp, Widget *w)
 static void add_decor(dlgparam *dp, unsigned flags, int x, int y, int w, int h, const char *text, const char *valid)
 {
     struct { int win; idef icon; } blk;
-    const int sx = 1 << xeig, sy = 1 << yeig;
+    const int sx = UI_PX, sy = UI_PX;
     Decor d;
     int handle = -1;
 
@@ -541,7 +542,7 @@ static void clear_tree(dlgparam *dp, bool wimp_too)
 static void rebuild_tree(dlgparam *dp)
 {
     int i, y = TREE_Y + 4;
-    const int sx = 1 << xeig, sy = 1 << yeig;
+    const int sx = UI_PX, sy = UI_PX;
 
     clear_tree(dp, true);
     for (i = 0; i < dp->npanels; i++) {
@@ -636,7 +637,7 @@ void cfgwin_set_focus(dlgparam *dp, Widget *w)
 /* Ask the Wimp to repaint a rectangle of the window (pixels, top left origin). */
 static void force_redraw_area(dlgparam *dp, int x, int y, int w, int h)
 {
-    const int sx = 1 << xeig, sy = 1 << yeig;
+    const int sx = UI_PX, sy = UI_PX;
     _swix(Wimp_ForceRedraw, _INR(0, 4), dp->win, x * sx, -((y + h) * sy), (x + w) * sx, -(y * sy));
 }
 
@@ -696,26 +697,24 @@ bool cfgwin_is_visible(dlgparam *dp, Widget *w)
 void cfgwin_create(dlgparam *dp)
 {
     wdef wd;
-    int handle = -1, i, scr_w, scr_h;
+    int handle = -1, i, vis_w, vis_h, vbar, hbar;
     wstate s;
-    const int sx = 1, sy = 1;
-
-    (void)sx; (void)sy;
     xeig = mode_var(4, 1);
     yeig = mode_var(5, 1);
-    scr_w = (mode_var(11, 1599) + 1) << xeig;
-    scr_h = (mode_var(12, 1199) + 1) << yeig;
+    /* The dialogue is CFG_W by CFG_H design pixels whatever the mode, so it may not fit a small screen: then it has scroll bars. */
+    dlg_fit_to_screen(CFG_W * UI_PX, CFG_H * UI_PX, &vis_w, &vis_h, &vbar, &hbar);
 
     memset(&wd, 0, sizeof wd);
     wd.visible.x0 = 200; wd.visible.y0 = 200;
-    wd.visible.x1 = 200 + (CFG_W << xeig); wd.visible.y1 = 200 + (CFG_H << yeig);
+    wd.visible.x1 = 200 + vis_w; wd.visible.y1 = 200 + vis_h;
     wd.behind = -1;
     /* (not auto-redraw: roconfig_event_redraw lets the Wimp draw the icons and then paints the
      * colour swatch in Window > Colours over them) */
-    wd.flags = WF_MOVEABLE | WF_BACK_ICON | WF_CLOSE_ICON | WF_TITLE_BAR | WF_NEW_FORMAT;
+    wd.flags = WF_MOVEABLE | WF_BACK_ICON | WF_CLOSE_ICON | WF_TITLE_BAR | WF_NEW_FORMAT |
+               (vbar ? WF_VSCROLL : 0) | (hbar ? WF_HSCROLL : 0);
     wd.title_fg = 7; wd.title_bg = 2; wd.work_fg = 7; wd.work_bg = 1;
     wd.scroll_outer = 3; wd.scroll_inner = 1; wd.title_hi = 12;
-    wd.extent.x0 = 0; wd.extent.x1 = CFG_W << xeig; wd.extent.y0 = -(CFG_H << yeig); wd.extent.y1 = 0;
+    wd.extent.x0 = 0; wd.extent.x1 = CFG_W * UI_PX; wd.extent.y0 = -(CFG_H * UI_PX); wd.extent.y1 = 0;
     wd.title_flags = IF_TEXT | IF_HCENTRED | IF_VCENTRED | IF_INDIRECTED;
     wd.work_flags = BT_NEVER << 12;
     wd.sprite_area = 1;
@@ -738,10 +737,9 @@ void cfgwin_create(dlgparam *dp)
     memset(&s, 0, sizeof s);
     s.handle = dp->win;
     if (!_swix(Wimp_GetWindowState, _IN(1), &s)) {
-        s.visible.x0 = (scr_w - (CFG_W << xeig)) / 2;
-        s.visible.x1 = s.visible.x0 + (CFG_W << xeig);
-        s.visible.y1 = (scr_h + (CFG_H << yeig)) / 2 + 40;
-        s.visible.y0 = s.visible.y1 - (CFG_H << yeig);
+        dlg_centre(vis_w, vis_h, vbar, hbar, 40, &s.visible);
+        s.scroll_x = 0;
+        s.scroll_y = 0;
         s.behind = -1;
         _swix(Wimp_OpenWindow, _IN(1), &s);
     }
@@ -871,8 +869,8 @@ static void open_popup(dlgparam *dp, Widget *w)
     s.handle = dp->win;
     if (_swix(Wimp_GetWindowState, _IN(1), &s)) return;
     widget_origin(dp, w, &ox, &oy);
-    x = s.visible.x0 + ((ox + w->x + w->fx) << xeig);
-    y = s.visible.y1 - ((oy + w->y + w->fy + w->fh) << yeig);
+    x = s.visible.x0 - s.scroll_x + (ox + w->x + w->fx) * UI_PX;
+    y = s.visible.y1 - s.scroll_y - (oy + w->y + w->fy + w->fh) * UI_PX;
 
     menu_free(menu_cur);
     m = menu_cur = menu_new(w->label && strlen(w->label) < 12 ? w->label : "Choose");
@@ -1388,7 +1386,7 @@ int roconfig_event_scroll(wevent *e)
     if (_swix(Wimp_GetPointerInfo, _IN(1), &p)) return 1;
     w = find_icon(dp, p.icon, &ci);
     if (w && w->ctrl->type == CTRL_LISTBOX && w->rows > 0)
-        scroll_list(dp, w, e->words[10] > 0 ? -3 : 3);
+        scroll_list(dp, w, e->words[9] > 0 ? -3 : 3);               /* (+36 is the y direction: see roterm_scroll_request) */
     return 1;
 }
 

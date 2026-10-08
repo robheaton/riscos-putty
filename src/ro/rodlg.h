@@ -3,10 +3,11 @@
  * (Adapted from riscos-vncclient, same author.)
  *
  * A dialogue is a plain (auto-redraw) window containing icons.  Items are
- * described in a table with positions in *pixels* measured from the window's
- * top-left corner (y grows downwards, which is easier to write by hand); they
- * are scaled by the screen mode's eigen factors when the dialogue is built, so
- * one layout works at every pixel density.  The system font is 8 px wide.
+ * described in a table with positions in *design pixels* measured from the
+ * window's top-left corner (y grows downwards, which is easier to write by
+ * hand); each is UI_PX OS units (rowimp.h), whatever the screen mode, so one
+ * layout works at every pixel density.  The desktop font is about 8 px a
+ * character wide.
  */
 #ifndef PUTTY_RODLG_H
 #define PUTTY_RODLG_H
@@ -62,6 +63,15 @@ dlg *dlg_new(const char *title, int w, int h, const dlg_item *items, int n,
 dlg *dlg_new_style(int style, const char *title, int w, int h, const dlg_item *items, int n,
                    dlg_click_fn cb, void *ud);
 void dlg_free(dlg *d);
+
+/*
+ * A window of w by h OS units might not fit the screen (in a 180 dpi mode of a small display): this works out the part of
+ * it to show, `vis_w` by `vis_h`, and the room its scroll bars take (`vbar` at the side, `hbar` below; 0 for none), so that
+ * the window can be made with scroll bars and opened where it is all on the screen.  Dialogues do this by themselves.
+ */
+void dlg_fit_to_screen(int w, int h, int *vis_w, int *vis_h, int *vbar, int *hbar);
+/* Where such a window goes to be in the middle of the screen, `lift` OS units above the centre. */
+void dlg_centre(int vis_w, int vis_h, int vbar, int hbar, int lift, wbox *out);
 
 /* Open centred on the screen (or just bring to front if already open). */
 void dlg_open(dlg *d);

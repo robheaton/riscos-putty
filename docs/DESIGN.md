@@ -392,7 +392,57 @@ Measured in RPCEmu (RISC OS 5.30): the screen is 1600x1200 with one pixel = 2 OS
 is fixed pitch with an advance of 7200 millipoints at 12 pt (18 OS units; 400 millipoints per OS
 unit). A screenshot without VNC: `*ScreenSave file`, then `tools/sprite2png.py`.
 
+**Screen modes: design pixels.** The dialogues (`rodlg`), the configuration window (`rocfgwin.c`) and the file
+transfer window (`rofiles.c`) are laid out in pixels, as they come in a 90 dpi mode, and `UI_PX` (rowimp.h, 2) says what
+each is worth in OS units *in every mode*. Until 0.09 a layout was scaled by the mode's eigen factors instead, which is
+right in a 90 dpi mode (eigen factors 1,1: a pixel is two OS units) and wrong in a 180 dpi one (0,0: one OS unit to the
+pixel): an OS unit is 1/180 inch in every mode and the desktop font is a fixed number of OS units tall (12 point is 30
+of them), so the windows came out half the size while their text stayed the same, and the labels and buttons were
+squashed into each other (found by a user on a high density display; the Connect box showed "name:" and "ection:" with
+the first letters cut off). Now a window is the same physical size in any mode, as the Filer's are. What really is a
+real pixel still uses the mode's own factors (`xeig`, `yeig`): the terminal's cells and box drawing in `rowindow.c`
+(the font is scaled by the Font Manager, the grid is snapped to pixels), the one-pixel-wide lines of the
+progress bar and colour swatch and their inset inside the bevel (the Wimp draws bevels a pixel thick).
+`tests/ro/modeinfo.c` prints the mode and how wide the Wimp makes a few strings, which is the same in any mode.
+
+A design that is a fixed number of OS units can be bigger than a screen of few OS units (a 180 dpi mode of a 1080p
+display is 1920x1080 OS units; a 90 dpi 800x600 is 1600x1200). The configuration dialogue is 1440x1160, the biggest
+window, so `cfgwin_create` checks: if it does not fit in the screen's height under a 42 unit title bar (or its width
+plus a scroll bar), the visible part is made as big as the screen allows and the window gets scroll bars. They need no
+code of ours: the window has no "scroll request" flag, so the Wimp scrolls it itself and sends the new position as
+an ordinary open request (`roconfig_event_open` passes it on). Anything that works out a screen position from a work
+area one must include the scroll offsets (`open_popup` does). Other windows are 1320x816 (PuTTYgen) or smaller.
+
+**Testing in a 1 OS unit per pixel mode.** `WimpMode X1600 Y1200 C16M EX0 EY0` makes one (C32K is "unsuitable for
+displaying the desktop"). RPCEmu's mouse hack turns the VNC pointer position into RISC OS coordinates as if the mode
+had two OS units to the pixel whatever the mode is, so there the desktop sees the pointer at twice the distance
+from the bottom left that the picture shows: the pointer cannot get into the top half of the screen, and a click
+lands somewhere else - the first attempts to click Settings... did nothing, and the pointer drawn was not where
+`OS_Mouse` (tests/ro/ptrinfo.c) said it was (x 820 y 844 for a click at 410,778). `VNC_EIG0=1` in the environment
+of `tools/vncdrive.py` sends the position that makes the desktop's pointer land where the picture is (x/2, and y
+measured up from the bottom halved), so scripts can use the pixel positions of the screenshot. After `WimpMode` the
+windows of programs already running keep their sizes in OS units, so for the size of a window made in the new mode,
+restart the program (or the emulator: the mode is lost then, set it again before starting PuTTY).
+
 ## Things that went wrong, and why
+
+- **The scroll bar arrows did nothing in the terminal and file windows (0.01 to 0.09, found while testing 180 dpi modes).**
+  A `Scroll_Request` (the Wimp's event 10, for a window made with `WF_SCROLL_REQUEST`) is the Open_Window_Request's eight
+  words - window, visible area, scroll x and y, the window to go behind - followed by two words: the **x direction at
+  +32 (word 8) and the y direction at +36 (word 9)**: -2 page, -1 step, +1 step, +2 page, with up and right positive.
+  We read +40, the word after, which is whatever the last event happened to leave in the (reused) event block; the code
+  comment said the block had a flags word before the directions, which is the layout of `Wimp_GetWindowState`'s block,
+  not of this event. Nothing caught it because the mouse wheel does not come this way - this Wimp turns a wheel notch
+  into an ordinary Open_Window_Request with a new scroll offset, which the terminal already handled (two lines to a
+  notch) - and the scroll bar's thumb, which also arrives as an Open_Window_Request. The window's arrows and the clicks
+  in the track (a page) were the only users and each moved the view by nothing at all. Found by tracing the block
+  (`ro_trace`) after the new horizontal bar of the file window did not respond.
+
+- **Squashed windows in a 180 dpi mode (0.09, fixed in 0.10).** The dialogues, the configuration window and the file
+  window multiplied their pixel layouts by the mode's eigen factors, which was right in the 90 dpi mode they were drawn
+  in and wrong in one with a pixel per OS unit, where the desktop font is as big as ever and the windows were half
+  size. The fix is a constant, `UI_PX` (see "Screen modes: design pixels"). It went unnoticed because every test ran
+  in one mode: the emulator's default 1600x1200 at 2 OS units to the pixel.
 
 - The first GUI run "hung": the app had crashed in `Wimp_CreateIcon` (a validation pointer of -1 on an
   iconbar text icon makes the Wimp fault), and the Wimp's error box waits for a click that a headless

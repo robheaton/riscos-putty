@@ -11,6 +11,17 @@
 #include <stdbool.h>
 #include "ro.h"
 
+/*
+ * The size of a "design pixel" in OS units.  The dialogues, the configuration window and the file transfer window
+ * are laid out in pixels as they come in a 90 dpi screen mode, where a pixel is two OS units, and this is what each
+ * of those is worth in every mode.  It is deliberately not the mode's own pixel size: an OS unit is 1/180 inch in
+ * every mode and the desktop font is a fixed number of OS units tall (12 point is 30 of them), so a layout that
+ * followed the mode's eigen factors came out half the size in a 180 dpi mode (one OS unit to the pixel) while the
+ * text in it did not shrink, and everything was squashed together.  What has to be a whole real pixel - a
+ * one-pixel line, the inset inside a bevel - still uses the mode's own factors.
+ */
+#define UI_PX 2
+
 /* ---- event codes (Wimp_Poll reason) ------------------------------------ */
 #define EV_NULL            0
 #define EV_REDRAW          1
