@@ -12,6 +12,7 @@ New session... from its menu) to open the Connect box.  Menu on the icon gives:
   Info          about this program (its version and licence)
   Help...       this file
   New session...  the Connect box
+  Local terminal  a terminal window for a RISC OS task window, the supervisor prompt (see below)
   File transfer...  the Connect box, for copying files to and from another computer
   Sessions      the sessions you have saved: choose one to connect straight away
                 (Adjust-click keeps the menu open; it is shaded until you have saved one)
@@ -50,6 +51,8 @@ Screen modes
 PuTTY's windows are the same size in every screen mode (they are laid out in OS units, as the Filer's are),
 so they look right in a 180 dpi mode, where a pixel is one OS unit, as in a 90 dpi one.  On a small screen
 the biggest ones - the configuration window, the key generator - are cut down to fit and have scroll bars.
+Changing the mode while PuTTY is running is fine: the terminal windows find their fonts again, so the text is
+the right size for the new mode.
 The terminal window is as many columns and rows of the font as you ask for (Window > Columns and Rows,
 and the font in Window > Appearance), so use a smaller font or fewer columns if it is too big for your screen.
 
@@ -74,14 +77,40 @@ smaller when the pointer reaches the window's size box, which is when the window
 
 Menu on the window gives Copy, Paste, Special command (Break, signals, ...),
 Event log (what PuTTY is doing and why a connection failed), Change settings
-(the configuration dialogue again, for the running session: Apply puts the changes
+(the configuration dialogue again, for the running session: Set puts the changes
 to use at once), Restart session, Reset terminal, Clear scrollback, Duplicate
-session (the same settings and window size) and New session, and Info.  Dragging the
+session (the same settings and window size) and New session.  Dragging the
 window's size box changes the number of rows and columns; Change settings shows
 the new size and Save in its Session panel keeps it.
 
 From the command line (for example from an Obey file) PuTTY takes the options of
-the other versions: putty -ssh -P 22 -l user -i keyfile host, or putty -load session.
+the other versions: putty -ssh -P 22 -l user -i keyfile host, or putty -load session;
+putty -local, or putty -local bash, starts a local terminal (see below).
+
+The local terminal
+------------------
+Local terminal on the icon bar menu opens a terminal window that is not connected to another computer but to a
+RISC OS task window: the supervisor prompt, the * where you type RISC OS commands.  What PuTTY adds to it is its
+terminal emulator, so a program that needs an xterm - bash, vim, nano, less, anything that draws the screen with
+escape sequences - works in the window, with colours, the cursor keys, the mouse, a scroll back and the clipboard.
+Type the program's name at the prompt (bash, vim notes/txt), or give it in the settings: Connection > Local has
+Command to run, and the window is then that program and ends when it does.  Session > Connection type > Other >
+Local, with Save, keeps a local terminal by name.
+
+The Unix programs of RISC OS (those built with UnixLib) read the terminal from their environment.  PuTTY sets the
+system variables UnixEnv$TERM (to the terminal type in Connection > Data: xterm), UnixEnv$COLUMNS and
+UnixEnv$LINES (the size of the window) when the first local terminal opens, keeps the size up to date as the
+window is resized (a program that is already running does not hear of it; one started afterwards does) and puts
+them back as they were when the last one closes.  The prompt and BASIC write the screen's own control codes: Delete,
+CLS, COLOUR, TAB(x,y) and cursor movement are turned into escape sequences, so they look right here too.
+
+At the * prompt use Backspace to correct a line.  The cursor keys send escape sequences, which are meant for
+programs: the prompt takes Escape to mean "give up this line".  Escape interrupts a running program, as it does
+everywhere in RISC OS.  Special command has Interrupt (Escape) and Quit task window, and closing the window ends the
+task window too.  ShellCLI_TaskQuit typed at the prompt ends it from inside, and the window then closes (Window >
+Behaviour says when it does).  The task window has 4096K of memory unless the system variable PuTTY$LocalSlot (a
+number of kilobytes) says otherwise.  What a program writes is taken to be Latin-1, the RISC OS alphabet:
+Window > Translation changes that.
 
 File transfer
 -------------

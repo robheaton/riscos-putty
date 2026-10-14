@@ -154,6 +154,10 @@ static Widget *new_widget(Panel *p, dlgcontrol *c)
     w->radio = -1;
     w->cursel = -1;
     if (c->label) w->label = dupstr(c->label);
+    if (p->is_footer && c->type == CTRL_BUTTON && w->label && !strcmp(w->label, "Apply")) {
+        sfree(w->label);                                /* the Style Guide's word for it is Set */
+        w->label = dupstr("Set");
+    }
     switch (c->type) {
       case CTRL_EDITBOX:
       case CTRL_FILESELECT:
@@ -402,8 +406,49 @@ static void layout_panel(dlgparam *dp, Panel *p, int path_matches_footer)
     p->height = cur_y;
 }
 
+/*
+ * The action buttons of a RISC OS dialogue are at the bottom right, Cancel and then the one that does the job (the
+ * default).  PuTTY's own layout (config.c) is the Windows one, Open and then Cancel, a fifth of the way in from each
+ * side, so the buttons of the strip along the bottom are put in place here, starting from the right.
+ */
+static void place_footer_buttons(Panel *p)
+{
+    int right = p->width, rank, i;
+
+    for (rank = 0; rank < 3; rank++)
+        for (i = 0; i < p->nw; i++) {
+            Widget *w = p->w[i];
+            const dlgcontrol *c = w->ctrl;
+            if (c->type != CTRL_BUTTON) continue;
+            if ((c->button.isdefault ? 0 : c->button.iscancel ? 1 : 2) != rank) continue;
+            w->x = right - w->fw;
+            right = w->x - FOOT_GAP;
+        }
+}
+
 /* ------------------------------------------------------------------------ */
 /* building the dialogue                                                    */
+
+/* The settings of a local terminal (rolocal.c): the command its task window runs.  It is "Remote command" of the
+ * Conf, which nothing else uses in a session of this kind. */
+static void add_local_panel(struct controlbox *b)
+{
+    struct controlset *s;
+
+    ctrl_settitle(b, "Connection/Local", "Options controlling a local terminal");
+    s = ctrl_getset(b, "Connection/Local", "command", "Task window");
+    ctrl_text(s, "A local terminal is a RISC OS task window, shown in this window. With no command it shows the "
+              "supervisor prompt (*). With one it runs the command and ends when the command does, so a program "
+              "such as bash or vim can be a session of its own.", HELPCTX(no_help));
+    ctrl_editbox(s, "Command to run:", 'c', 100, HELPCTX(no_help), conf_editbox_handler, I(CONF_remote_cmd), ED_STR);
+}
+
+static const char *initial_panel;
+
+void roconfig_initial_panel(const char *path)
+{
+    initial_panel = path;
+}
 
 dlgparam *cfg_build(Conf *conf, bool midsession, int protocol, int protcfginfo)
 {
@@ -419,6 +464,7 @@ dlgparam *cfg_build(Conf *conf, bool midsession, int protocol, int protcfginfo)
     dp->win = -1;
     dp->ctrlbox = b = ctrl_new_box();
     setup_config_box(b, midsession, protocol, protcfginfo);
+    add_local_panel(b);
 
     dp->footer = new_panel("");
     dp->footer->is_footer = true;
@@ -446,7 +492,13 @@ dlgparam *cfg_build(Conf *conf, bool midsession, int protocol, int protcfginfo)
     }
     for (i = 0; i < (size_t)dp->npanels; i++) layout_panel(dp, dp->panels[i], 0);
     layout_panel(dp, dp->footer, 1);
+    place_footer_buttons(dp->footer);
     dp->cur = dp->panels[0];
+    if (initial_panel) {
+        Panel *p = find_panel(dp, initial_panel);
+        if (p) dp->cur = p;
+        initial_panel = NULL;
+    }
     return dp;
 }
 

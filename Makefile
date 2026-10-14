@@ -4,6 +4,7 @@
 #   make plink      link the console bring-up tool
 #   make puttygen   link the console key generator and converter
 #   make psftp pscp link the secure file transfer tools
+#   make dist       the release zip (build/PuTTY-<version>.zip)
 #   make clean
 #
 # The RISC OS build uses GCCSDK's old GCC 4.7 toolchain with the Shared C
@@ -191,12 +192,19 @@ $(B)/pscp,ff8: $(B)/gen/pscp.o $(B)/be_pscp.o $(SFTP_O) $(B)/libputty.a
 
 # ---- the Wimp application ---------------------------------------------------
 GUI_SRC  := roapp rowindow roseat rowimp rofont rodlg rodialog romenu roclip rocontext roconnect roconfig rocfgwin rosave roinfo \
-            rofiles roftp rofile roagent
+            rofiles roftp rofile roagent rolocal be_putty
 GUI_O    := $(addprefix $(B)/ro/,$(addsuffix .o,$(GUI_SRC)))
 # (the key agent is in the program, so there is no stand-in for it: src/ro/roagent.c and upstream's pageant.c)
 GUI_STUBS := stubs/no-gss stubs/no-console stubs/no-dit stubs/no-printing
 GUI_O    += $(addprefix $(B)/up/,$(addsuffix .o,$(GUI_STUBS)))
-GUI_ALL  := $(GUI_O) $(B)/pageant.o $(B)/be_putty.o $(RO_O) $(UXGEN_O)
+GUI_ALL  := $(GUI_O) $(B)/gen/cmdline.o $(B)/pageant.o $(RO_O) $(UXGEN_O)
+
+# The PuTTY program's command line code is upstream's cmdline.c with the function in patches/cmdline.patch, which a program
+# that is handed a second command line while it runs needs (roapp.c).  It is linked ahead of the library, so the library's
+# copy is not used (the other programs keep it).
+$(G)/cmdline.c: $(U)/cmdline.c patches/cmdline.patch
+	@mkdir -p $(@D)
+	patch -s -o $@ $(U)/cmdline.c patches/cmdline.patch
 
 # Pageant's core, the key agent.  It defines random_read() for the stand-alone Pageant, which has no random
 # number generator and so makes this one a fatal error; here sshrand.c has the real one, so the stand-in
@@ -206,10 +214,7 @@ $(B)/pageant.o: $(U)/pageant.c $(G)/licence.h
 	@echo "  CC  $<  (key agent)"
 	$(Q)$(RCC) $(UFLAGS) -Drandom_read=pageant_random_read_unused -c -o $@ $<
 
-$(B)/be_putty.o: $(U)/be_list.c
-	@mkdir -p $(@D)
-	@echo "  CC  $<  (putty backends)"
-	$(Q)$(RCC) $(UFLAGS) -DSSH=1 -DSERIAL=0 -DOTHERBACKENDS=1 -DAPPNAME=PuTTY -c -o $@ $<
+# (the PuTTY program's list of backends, src/ro/be_putty.c, is upstream's be_list.c plus the local terminal)
 
 $(B)/putty,ff8: $(GUI_ALL) $(B)/libputty.a
 	@echo "  LD  $@"
@@ -230,9 +235,18 @@ $(B)/pgen,ff8: $(GEN_O) $(B)/libputty.a
 	$(Q)$(RCC) $(LDFLAGS) -o $@ $(GEN_O) -Wl,--start-group $(B)/libputty.a -Wl,--end-group
 
 # ---- diagnostics for the emulator (tests/ro/*.c, each a small stand-alone program) ----
-TEST_SRC := $(wildcard tests/ro/*.c)
+# (xtest is different: it tests what a Unix program sees, so it is built with UnixLib rather than the Shared C Library,
+# linked statically and turned into an AIF.)
+UL_TESTS := xtest inecho
+TEST_SRC := $(filter-out $(addprefix tests/ro/,$(addsuffix .c,$(UL_TESTS))),$(wildcard tests/ro/*.c))
 FF8      := ,ff8
-TEST_BIN := $(patsubst tests/ro/%.c,$(B)/%$(FF8),$(TEST_SRC))
+TEST_BIN := $(patsubst tests/ro/%.c,$(B)/%$(FF8),$(TEST_SRC)) $(addprefix $(B)/,$(addsuffix $(FF8),$(UL_TESTS)))
+
+$(addprefix $(B)/,$(addsuffix $(FF8),$(UL_TESTS))): $(B)/%,ff8: tests/ro/%.c
+	@mkdir -p $(@D)
+	@echo "  CC  $<  (UnixLib)"
+	$(Q)$(RCC) -std=gnu99 -O2 -march=armv4 -Wall -static -o $@.elf $<
+	$(Q)elf2aif $@.elf $@ && rm -f $@.elf
 
 $(B)/%,ff8: tests/ro/%.c
 	@mkdir -p $(@D)

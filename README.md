@@ -29,7 +29,8 @@ the command line names a host or a saved session, starts that session) and the n
 and one key agent.
 
 Menu on the icon bar icon gives Info (the standard "About this program" box), Help, New session...,
-File transfer..., Sessions (the saved sessions: choose one to connect at once), Keys... (the key agent), Key generator... and Quit.
+Local terminal, File transfer..., Sessions (the saved sessions: choose one to connect at once), Keys... (the key agent),
+Key generator... and Quit.
 
 In the terminal window: select with the mouse (drag, double-click, triple-click;
 Adjust extends); the selection goes straight to the RISC OS clipboard. Shift-Insert
@@ -39,9 +40,23 @@ dropped on the window is pasted. The mouse wheel, the scroll bar and Shift-Page 
 (Alt-F, Alt-Backspace, Alt-Left...); the right one still composes characters. Menu opens PuTTY's window
 menu: Copy, Paste, Special command, Event log (what PuTTY is doing, and why a
 connection failed), Change settings (the configuration dialog for the running
-session), Restart session, Reset terminal, Clear scrollback, Duplicate session,
-New session. `putty -ssh -P 22 -l user -i key.ppk host` and `putty -load
+session; its Set button puts the changes to use), Restart session, Reset terminal, Clear scrollback,
+Duplicate session, New session. `putty -ssh -P 22 -l user -i key.ppk host` and `putty -load
 session` work from the command line.
+
+**Local terminal.** Local terminal on the icon bar menu (or `putty -local`) opens a terminal window that is not
+connected to another computer but to a RISC OS *task window*: the supervisor prompt (`*`), where you type RISC OS
+commands. What it adds to a task window in a text editor is PuTTY's terminal emulator, so a program that wants an
+xterm - bash, vim, nano, less, anything that draws the screen with escape sequences - works in it, with colours,
+cursor keys, the mouse, scrollback and the clipboard. Type the program's name at the prompt (`bash`,
+`vim file`), or give the command to run in Connection > Local of the settings (or `putty -local bash`) and the window
+is that program, ending when it does. `TERM`, `COLUMNS` and `LINES` are set for the programs started in it (UnixLib,
+which the Unix ports use, makes the environment from the system variables `UnixEnv$TERM` and so on, and takes the
+size from `COLUMNS` and `LINES`); they follow the window's size for programs started after it is resized. The
+prompt's own screen codes (Delete, CLS, COLOUR, TAB(x,y)) are turned into their escape sequence equivalents, so the
+prompt and BASIC look right too. Escape interrupts a program, as it does anywhere in RISC OS, and Special command
+has Interrupt and Quit task window. The memory of the task window is 4096K unless `PuTTY$LocalSlot` says otherwise.
+It is the TaskWindow module's protocol, the one Edit and StrongED use for their task windows (`src/ro/rolocal.c`).
 
 Settings and host keys live in the PuTTY directory of `<Choices$Write>`.
 
@@ -135,7 +150,11 @@ so a stuck test gives up, and `PuTTY$Trace` (a filename) to log socket events. `
 logs what the receiver of a dragged file answers (`ro_trace` in `util.c` is the helper for such hooks), and
 `PuTTY$ForceMouseEntropy` makes the key generator ask for mouse movements even when CryptRandom is there.
 `PuTTY$AllowSeveral` (any value) lets a second copy of the program start instead of handing over to the first, for
-tests that want separate tasks. `PuTTYkey$Trace` (a filename) logs every key event the terminal window receives, with the modifiers, and
+tests that want separate tasks. For the local terminal, `PuTTY$LocalType` (text, or `@file`) is typed into a new local
+terminal as it starts (`\r \n \e \t \xHH` are escapes in it, `\p` waits a second and a half: a test cannot send a
+program's name and the keys it is to be given in one go, as the Escape character discards what is waiting) and `PuTTYlocal$Trace`
+(a filename) logs the task window's messages: a test can then run `putty -local` and read the screen with `*ScreenSave`
+without any keyboard or mouse (docs/DESIGN.md). `PuTTYkey$Trace` (a filename) logs every key event the terminal window receives, with the modifiers, and
 `tests/ro/keyscan.c` (`make tests`) lists the keys the keyboard says are held, which is how the INKEY numbers in
 `rowindow.c` were found. To check what the keys send, run `sh -c 'stty raw -echo; exec cat > keys.bin'` in a session
 and press them with `vncdrive.py` (hold each one for a few tenths of a second: `keydown`, `wait`, `keyup`).
@@ -158,18 +177,24 @@ docs/DESIGN.md). `tests/ro/modeinfo.c` and `tests/ro/ptrinfo.c` print the mode a
   (dialogue, menu and Wimp helpers), `rofiles.c`/`roftp.c`/`rofile.c` (the file transfer window, its
   SFTP connection, and the local file layer shared with psftp and pscp), `rosave.c` (the save box and the
   drag-to-save protocol), `roagent.c` (the key agent: glue to upstream's `pageant.c`, and its window),
-  `rogen.c`/`rokeygen.c` (the key generator) and `roinfo.c` (the Info box).
+  `rogen.c`/`rokeygen.c` (the key generator), `roinfo.c` (the Info box), `rolocal.c` (the local terminal: a Backend
+  that talks to the TaskWindow module) and `be_putty.c` (the program's list of backends: upstream's plus that one).
 - `app/!PuTTY/`, `app/!PuTTYgen/` - the application directories' static files (`!PuTTYgen` is built from
   `rogen.c` and `rokeygen.c`; its sprite is drawn by `tools/mksprites.py`).
-- `patches/` - the few lines changed in upstream files (`cmdgen.patch`, `psftp.patch`, `pscp.patch`), applied at build time.
+- `patches/` - the few lines changed in upstream files (`cmdgen.patch`, `psftp.patch`, `pscp.patch`, `cmdline.patch`), applied at build time.
 - `tests/ro/` - diagnostics run in the emulator: the Resolver SWIs (`dnstest`), the Font Manager, the HAL
   counter, half-closed connections on the loopback (`halfclose`), the CryptRandom module (`crtest`), file types
-  (`ftype`) and what the C library says after a failed file call (`errtest`).
+  (`ftype`) and what the C library says after a failed file call (`errtest`); for the local terminal, `twprobe` (a
+  script-driven parent of the TaskWindow module that logs its messages), the UnixLib programs `xtest` (escape
+  sequences and keys, seen from a Unix program) and `inecho` (counts the input it gets), and the helpers `wimprun` (a
+  desktop task that runs a script of commands with waits), `pause` and `tasks` (the Task Manager's list).
 - `tools/echoserver.py`, `tools/conchserver.py`, `tools/testproxy.py` - test servers: a Telnet/Raw echo
   server, a second SSH implementation (Twisted Conch, with port forwarding), and an HTTP/SOCKS proxy.
 - `tools/cryptomatrix.py` - runs every cipher, MAC, key exchange, key type and compression mode
   through plink in RPCEmu against Uppity (see docs/DESIGN.md).
 - `tools/sftptest.py` - runs psftp and pscp in RPCEmu against Uppity (SFTP and SCP, both directions, names, types, dates).
+- `tools/localtest.py` - the local terminal's regression test: five sessions type into themselves under `wimprun` and
+  PuTTY's session logs are compared with what a terminal should have been sent.
 - `tools/termkeys.py` - holds each special key in a terminal window in RPCEmu and checks the bytes sent
   (51 keys: cursor, editing and function keys, Shift/Ctrl/Alt combinations, Ctrl-Shift-C/V).
 - `tools/keytest.py` - runs puttygen in RPCEmu against the host's puttygen and OpenSSH: keys generated,

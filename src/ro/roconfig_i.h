@@ -21,7 +21,7 @@
 
 /* ---- layout constants (pixels; the Wimp's text is about 8 px a character) ---- */
 #define CFG_W          720          /* the dialogue's work area */
-#define CFG_H          580
+#define CFG_H          566
 #define TREE_X         10
 #define TREE_Y         10
 #define TREE_W         190
@@ -31,8 +31,8 @@
 #define PANEL_W        500
 #define PANEL_H        500
 #define HEAD_H         30           /* a panel's heading, above its first box */
-#define FOOT_Y         524
-#define FOOT_H         50
+#define FOOT_Y         526          /* the action buttons' row: below the panels, 12 px above the window's edge */
+#define FOOT_GAP       10           /* between action buttons */
 
 #define BOX_PAD        10           /* inside a box, at the sides */
 #define BOX_TITLE_H    20           /* room for a box's title */

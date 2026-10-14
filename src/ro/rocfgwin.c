@@ -18,7 +18,6 @@
 #include "roconfig_i.h"
 
 static dlgparam *all_dialogs;
-static int xeig = 1, yeig = 1;
 
 static int mode_var(int var, int dflt)
 {
@@ -661,7 +660,7 @@ void cfgwin_show_panel(dlgparam *dp, Panel *p)
     for (j = 0; j < p->nbox; j++) {
         Box *b = &p->box[j];
         add_decor(dp, IF_TEXT | IF_BORDER | IF_FG(7) | IF_BG(1), PANEL_X, oy + b->y0 + 9, p->width,
-                  b->y1 - b->y0 - 9, "", "R2");
+                  b->y1 - b->y0 - 9, "", "R4");               /* a group box is etched (R2 is the sunken look of a field) */
         add_decor(dp, IF_TEXT | IF_VCENTRED | IF_FILLED | IF_FG(7) | IF_BG(1), PANEL_X + BOX_PAD - 4, oy + b->y0,
                   (int)strlen(b->title) * CHAR_W + 12, 18, b->title, "");
     }
@@ -699,8 +698,6 @@ void cfgwin_create(dlgparam *dp)
     wdef wd;
     int handle = -1, i, vis_w, vis_h, vbar, hbar;
     wstate s;
-    xeig = mode_var(4, 1);
-    yeig = mode_var(5, 1);
     /* The dialogue is CFG_W by CFG_H design pixels whatever the mode, so it may not fit a small screen: then it has scroll bars. */
     dlg_fit_to_screen(CFG_W * UI_PX, CFG_H * UI_PX, &vis_w, &vis_h, &vbar, &hbar);
 

@@ -9,9 +9,11 @@
 /* Open the Connect dialogue (start a new session). */
 void roapp_connect_dialog(void);
 
-/* The window of the standard "About this program" box, for use as the submenu of an
- * Info menu item (menu_set_window); 0 if it could not be made. */
-int roapp_info_window(void);
+/* Start a local terminal: a window for a RISC OS task window (the supervisor prompt). */
+void roapp_local_terminal(void);
+
+/* The Wimp handle of this program's task. */
+int roapp_task_handle(void);
 
 /*
  * Long operations (making a key, a file transfer) are plain function calls that cannot return

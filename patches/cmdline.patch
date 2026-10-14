@@ -1,0 +1,31 @@
+--- cmdline.c
++++ cmdline.c
+@@ -178,6 +178,28 @@
+ bool cmdline_lp_verbose(LogPolicy *lp) { return cmdline_verbose(); }
+ bool cmdline_loaded_session(void) { return loaded_session; }
+ 
++/*
++ * RISC OS: the program is one task that is handed another command line when it is started again while it runs
++ * (roapp.c), so what one command line left in the statics has to be forgotten before the next is read: the arguments
++ * saved for later (which point into a list that is freed by then, and are never run if the line was refused), and the
++ * flags that say a host name, a port or a session has been seen (without that a second host name is taken for a
++ * port).  The password given with -pw is left alone: it belongs to a session that may still be logging in.
++ */
++void cmdline_reset(void)
++{
++    int pri;
++
++    for (pri = 0; pri < NPRIORITIES; pri++) {
++        sfree(saves[pri].params);
++        saves[pri].params = NULL;
++        saves[pri].savesize = 0;
++        saves[pri].nsaved = 0;
++    }
++    seen_hostname_argument = false;
++    seen_port_argument = false;
++    loaded_session = false;
++}
++
+ static void set_protocol(Conf *conf, int protocol)
+ {
+     settings_set_default_protocol(protocol);

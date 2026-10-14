@@ -25,6 +25,9 @@ typedef void (*RoConfigDone)(void *ctx, bool ok, Conf *conf);
 void roconfig_open(Conf *conf, bool midsession, int protocol, int protcfginfo,
                    const char *title, RoConfigDone done, void *ctx);
 
+/* For tests: the panel (by its path, "Connection/Local") that the next dialogue opens on instead of the first. */
+void roconfig_initial_panel(const char *path);
+
 /* Dialogues are told apart by the ctx they were opened with.  Bring the one for ctx to
  * the front (false if there is none), or end it as if Cancel had been pressed. */
 bool roconfig_raise(void *ctx);

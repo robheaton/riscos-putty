@@ -4,7 +4,9 @@
  *   Copy, Copy all, Paste
  *   Special command >   (what the connection offers: Break, signals, rekey ...)
  *   Event log..., Change settings..., Restart session, Reset terminal, Clear scrollback
- *   Duplicate session, New session..., Info >
+ *   Duplicate session, New session...
+ *
+ * (Info is on the icon bar menu only, as the Style Guide has it: the menu on a window does not repeat it.)
  *
  * Wimp menus have no callbacks: the Wimp reports the chosen path of items in a
  * Menu_Selection event, so we remember what each item of the menu on screen means.
@@ -23,7 +25,7 @@
 
 enum {
     M_COPY, M_COPYALL, M_PASTE, M_SPECIAL, M_EVENTLOG, M_SETTINGS, M_RESTART, M_RESET, M_CLEAR,
-    M_DUPLICATE, M_NEW, M_INFO
+    M_DUPLICATE, M_NEW
 };
 
 /* The Special command menu, and the submenus PuTTY may put in it. */
@@ -113,9 +115,7 @@ void rocontext_open(RoTerm *t, int x, int y)
     menu_add(m, "Reset terminal", 0);
     menu_add(m, "Clear scrollback", MF_DOTTED);
     menu_add(m, "Duplicate session", 0);
-    menu_add(m, "New session...", MF_DOTTED);
-    menu_add(m, "Info", 0);                            /* the standard "About this program" window */
-    if (roapp_info_window()) menu_set_window(m, M_INFO, roapp_info_window());
+    menu_add(m, "New session...", 0);
 
     if (sp && sp->m->nitems) menu_set_sub(m, M_SPECIAL, sp->m);
     else menu_shade(m, M_SPECIAL, 1);
@@ -213,8 +213,6 @@ void rocontext_selection(const int *sel)
       case M_NEW:
         roapp_connect_dialog();
         break;
-      case M_INFO:
-        return;                        /* its window is the submenu; keep the menu as it is */
     }
 
     /* Adjust keeps the menu on screen, as for every other menu */

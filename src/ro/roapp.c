@@ -31,6 +31,7 @@
 #include "rosave.h"
 #include "rofiles.h"
 #include "roagent.h"
+#include "rolocal.h"
 #include "roinfo.h"
 #include "roversion.h"
 
@@ -46,7 +47,8 @@ static menu *iconbar_menu;
 static const int wanted_messages[] = {
     MSG_PALETTE_CHANGE, MSG_MODE_CHANGE, MSG_CLAIM_ENTITY, MSG_DATA_REQUEST, MSG_DATA_SAVE,
     MSG_DATA_SAVE_ACK, MSG_DATA_LOAD, MSG_DATA_LOAD_ACK, MSG_RAM_FETCH, MSG_RAM_TRANSMIT,
-    MSG_RELEASE_ENTITY, MSG_MENUS_DELETED, MSG_HELP_REQUEST, MSG_PUTTY_PING, MSG_PUTTY_PONG, 0
+    MSG_RELEASE_ENTITY, MSG_MENUS_DELETED, MSG_HELP_REQUEST, MSG_PUTTY_PING, MSG_PUTTY_PONG,
+    MSG_TW_OUTPUT, MSG_TW_EGO, MSG_TW_MORIO, 0
 };
 
 /* ------------------------------------------------------------------------ */
@@ -158,6 +160,7 @@ void cleanup_exit(int code)
 {
     sk_cleanup();
     random_save_seed();
+    rolocal_shutdown();
     roagent_shutdown();
     roclip_shutdown();
     closedown();
@@ -201,18 +204,13 @@ void roapp_menu_opened(RoMenuHandler handler)
  * The icon bar menu follows the usual RISC OS pattern: Info first (its submenu is the
  * "About this program" window), then Help, the application's own entries, and Quit.
  */
-enum { IB_INFO, IB_HELP, IB_NEW, IB_FILES, IB_SESSIONS, IB_KEYS, IB_KEYGEN, IB_QUIT };
+enum { IB_INFO, IB_HELP, IB_NEW, IB_LOCAL, IB_FILES, IB_SESSIONS, IB_KEYS, IB_KEYGEN, IB_QUIT };
 
 static dlg   *d_info;
 static menu  *sessions_menu;           /* the saved sessions, as the Sessions submenu shows them */
 static char **session_names;
 static int    nsessions;
 static int    menu_x, menu_y;          /* where the icon bar menu was opened (for Adjust) */
-
-int roapp_info_window(void)
-{
-    return d_info ? dlg_window(d_info) : 0;
-}
 
 static void build_menus(void)
 {
@@ -222,6 +220,7 @@ static void build_menus(void)
     if (d_info) menu_set_window(iconbar_menu, IB_INFO, dlg_window(d_info));
     menu_add(iconbar_menu, "Help...", 0);
     menu_add(iconbar_menu, "New session...", 0);
+    menu_add(iconbar_menu, "Local terminal", 0);
     menu_add(iconbar_menu, "File transfer...", 0);
     menu_add(iconbar_menu, "Sessions", 0);
     menu_add(iconbar_menu, "Keys...", 0);
@@ -232,6 +231,26 @@ static void build_menus(void)
 void roapp_connect_dialog(void)
 {
     roconnect_open();
+}
+
+/* A terminal window for a RISC OS task window (rolocal.c), with the settings a new session would have.  Its
+ * received text is taken to be in the alphabet RISC OS programs write (Latin-1, not UTF-8) unless the Default Settings
+ * say otherwise. */
+void roapp_local_terminal(void)
+{
+    Conf *conf = conf_new();
+
+    do_defaults(NULL, conf);
+    conf_set_int(conf, CONF_protocol, PROT_LOCAL);
+    conf_set_str(conf, CONF_host, "");
+    if (!conf_get_str(conf, CONF_line_codepage)[0] || !strcmp(conf_get_str(conf, CONF_line_codepage), "UTF-8"))
+        conf_set_str(conf, CONF_line_codepage, "ISO-8859-1");
+    if (!roterm_new(conf)) conf_free(conf);
+}
+
+int roapp_task_handle(void)
+{
+    return task_handle;
 }
 
 /* Open the help file (!Help in the application directory) in whatever shows text. */
@@ -355,6 +374,9 @@ static void iconbar_selection(const int *sel)
       case IB_NEW:
         roapp_connect_dialog();
         break;
+      case IB_LOCAL:
+        roapp_local_terminal();
+        break;
       case IB_FILES:
         if (!rofiles_raise()) roconnect_open_files();       /* (only one file window at a time) */
         break;
@@ -408,6 +430,7 @@ static const char *help_for(int win, int icon)
 /* a second copy                                                            */
 
 static bool start_from_command_line(int argc, char **argv);
+void cmdline_reset(void);                           /* patches/cmdline.patch */
 
 /*
  * Starting !PuTTY while it is running would give a second task with its own icon and its own keys, so a copy
@@ -490,11 +513,13 @@ static void dispatch(int event, wevent *e)
         if (menu_handler) menu_handler(e->words);
         break;
       case EV_MESSAGE_ACK:
-        rosave_bounced(&e->msg);                 /* a message of ours that nobody answered */
+        if (!rolocal_bounced(&e->msg))
+            rosave_bounced(&e->msg);             /* a message of ours that nobody answered */
         break;
       case EV_MESSAGE:
       case EV_MESSAGE_RECORDED:
-        if (rosave_message(&e->msg) || rofiles_message(&e->msg) || roconnect_message(&e->msg) ||
+        if (rolocal_message(&e->msg) ||
+            rosave_message(&e->msg) || rofiles_message(&e->msg) || roconnect_message(&e->msg) ||
             roconfig_message(&e->msg) || roagent_message(&e->msg) || roclip_message(&e->msg))
             break;
         switch (e->msg.action) {
@@ -519,8 +544,10 @@ static void dispatch(int event, wevent *e)
           case MSG_SHUTDOWN:
             break;
           case MSG_PALETTE_CHANGE:
-          case MSG_MODE_CHANGE:
             roterm_redraw_all();
+            break;
+          case MSG_MODE_CHANGE:
+            roterm_mode_changed();
             break;
           default:
             break;
@@ -652,16 +679,28 @@ static void usage(void)
               "  -ssh -telnet -rlogin -raw   protocol\n"
               "  -P port   -l user   -i keyfile   -pw password\n"
               "  -load session   -v\n"
-              "  --demo    paint a test pattern (no network)");
+              "  -local [command]   a local terminal (a task window); the command it runs, if any\n"
+              "  --demo    paint a test pattern (no network)\n"
+              "  --settings, --settings-mid [--panel Connection/Local]   open the Settings dialogue (for tests)");
+}
+
+static void settings_dev_done(void *ctx, bool ok, Conf *conf)
+{
+    if (ok) conf_free(conf);
 }
 
 static bool start_from_command_line(int argc, char **argv)
 {
-    Conf *conf = conf_new();
+    Conf *conf;
     CmdlineArgList *arglist;
     size_t pos = 0;
-    bool errors = false, demo = false;
+    bool errors = false, demo = false, local = false, settings = false, settings_mid = false;
+    int i;
 
+    cmdline_reset();                                /* a copy that is handed a second command line starts afresh */
+    conf = conf_new();
+    for (i = 1; i < argc; i++)
+        if (!strcmp(argv[i], "-local")) local = true;
     do_defaults(NULL, conf);
     settings_set_default_protocol(conf_get_int(conf, CONF_protocol));
     settings_set_default_port(conf_get_int(conf, CONF_port));
@@ -680,6 +719,12 @@ static bool start_from_command_line(int argc, char **argv)
             continue;
         } else if (!strcmp(p, "--demo")) {
             demo = true;
+        } else if (!strcmp(p, "--settings") || !strcmp(p, "--settings-mid")) {
+            settings = true;
+            settings_mid = !strcmp(p, "--settings-mid");
+        } else if (!strcmp(p, "--panel") && nextarg) {
+            roconfig_initial_panel(dupstr(cmdline_arg_to_str(nextarg)));
+            pos++;
         } else if (!strcmp(p, "--help")) {
             usage();
             cmdline_arg_list_free(arglist);
@@ -693,7 +738,20 @@ static bool start_from_command_line(int argc, char **argv)
         cmdline_arg_list_free(arglist);
         return roterm_new_demo(conf) != NULL;
     }
-    if (errors || !cmdline_host_ok(conf)) {
+    if (settings) {                                 /* the Settings dialogue on its own, to look at it */
+        cmdline_arg_list_free(arglist);
+        roconfig_open(conf, settings_mid, conf_get_int(conf, CONF_protocol), 0,
+                      settings_mid ? "PuTTY Reconfiguration" : "PuTTY Configuration", settings_dev_done, NULL);
+        return true;
+    }
+    if (local && !errors) {                         /* "putty -local cmd": the "host" is the command to run */
+        if (conf_get_str(conf, CONF_host)[0]) {
+            conf_set_str(conf, CONF_remote_cmd, conf_get_str(conf, CONF_host));
+            conf_set_str(conf, CONF_host, "");
+        }
+        if (!conf_get_str(conf, CONF_line_codepage)[0] || !strcmp(conf_get_str(conf, CONF_line_codepage), "UTF-8"))
+            conf_set_str(conf, CONF_line_codepage, "ISO-8859-1");
+    } else if (errors || !cmdline_host_ok(conf)) {
         cmdline_arg_list_free(arglist);
         conf_free(conf);
         if (argc > 1) usage();
@@ -701,7 +759,13 @@ static bool start_from_command_line(int argc, char **argv)
     }
     cmdline_run_saved(conf);
     cmdline_arg_list_free(arglist);
-    return roterm_new(conf) != NULL;
+    {
+        RoTerm *t;
+        roterm_cmdline_session = true;
+        t = roterm_new(conf);
+        roterm_cmdline_session = false;
+        return t != NULL;
+    }
 }
 
 /*

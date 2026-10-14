@@ -119,7 +119,7 @@ static const char *item_validation(const dlg_item *it)
     case DI_DEFBUTTON:  return "R6,3";
     case DI_OPTION:     return "Soptoff,opton";
     case DI_RADIO:      return "Sradiooff,radioon";
-    case DI_BOX:        return "R2";
+    case DI_BOX:        return "R4";            /* etched, as the Style Guide's group boxes are */
     case DI_DISPLAY:    return "R2";
     case DI_SWATCH:     return "R2";
     case DI_BAR:        return "R2";

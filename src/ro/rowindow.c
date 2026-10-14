@@ -42,6 +42,7 @@
 enum { K_LSHIFT = 4, K_LCTRL = 5, K_LALT = 6, K_RSHIFT = 7, K_RCTRL = 8, K_RALT = 9,
        K_UP = 58, K_DOWN = 42, K_HOME = 63, K_PGUP = 64, K_PGDN = 79 };
 
+bool roterm_cmdline_session;
 static RoTerm *terms;
 static int term_counter;
 static int xeig = 1, yeig = 1, screen_w = 3200, screen_h = 2400;   /* OS units */
@@ -1621,6 +1622,7 @@ static RoTerm *new_common(Conf *conf)
     t->win = -1;
     t->id = term_counter++;
     t->conf = conf;
+    t->cmdline_pw = roterm_cmdline_session;
     t->mouse_held = MBT_NOTHING;
     t->termwin.vt = &roterm_termwin_vt;
     t->seat.vt = &roterm_seat_vt;
@@ -1809,6 +1811,41 @@ static void apply_settings(RoTerm *t, Conf *newconf)
     mark_dirty(t, 0, 0, t->cols - 1, t->rows - 1);
     force_redraw_all(t);
     conf_free(oldconf);
+}
+
+/*
+ * The Font Manager works out a font's size in pixels from the screen mode when the font is found, and does not
+ * redo it when the mode changes: a font found in a 90 dpi mode is drawn half the size it should be in a 180 dpi
+ * one (the letters shrink inside their cells), and twice the size going the other way (they overlap).  So after
+ * a mode change every window's font is found again - after the old one is lost, or Font_FindFont hands back
+ * the same handle - and a window whose cells came out a different size follows them.
+ */
+void roterm_mode_changed(void)
+{
+    RoTerm *t;
+
+    read_screen();
+    for (t = terms; t; t = t->next) {
+        const RoFont old = t->font;
+        char spec[sizeof t->font.spec], err[160];
+        bool resized;
+
+        snprintf(spec, sizeof spec, "%s", old.spec);
+        rofont_close(&t->font);
+        if (!rofont_open(&t->font, spec, err, sizeof err) &&
+            !rofont_open(&t->font, "Corpus.Medium,12", err, sizeof err)) {
+            t->font = old;                             /* (no font at all is not going to happen: it was found a moment ago) */
+            t->font.handle[0] = t->font.handle[1] = 0;
+        }
+        resized = t->font.cell_w_mp != old.cell_w_mp || t->font.cell_h != old.cell_h;
+        if (resized && t->win >= 0) {
+            set_window_cells(t, t->cols, t->rows);
+            set_extent(t);
+            apply_scrollbar(t);
+        }
+        mark_dirty(t, 0, 0, t->cols - 1, t->rows - 1);
+        force_redraw_all(t);
+    }
 }
 
 static void settings_done(void *ctx, bool ok, Conf *newconf)

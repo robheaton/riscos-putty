@@ -274,18 +274,19 @@ Files: `roapp.c` (the Wimp task, poll loop and icon bar), `rowindow.c` (terminal
 painting, keys, mouse, Event Log), `roseat.c` (Seat and LogPolicy, starting and restarting the
 connection), `roclip.c` (the global clipboard), `rocontext.c` (the window menu), `roconnect.c` (the
 Connect box), `roconfig.c`/`rocfgwin.c` (the configuration dialogue), `rofont.c` (fonts),
-`rodlg.c`/`rodialog.c` (dialogues and message boxes), `romenu.c`, `rowimp.[ch]`. `rowimp`, `rodlg`, `romenu` and the clipboard protocol are adapted from riscos-vncclient
+`rodlg.c`/`rodialog.c` (dialogues and message boxes), `romenu.c`, `rowimp.[ch]`, `rolocal.c` (the local terminal) and
+`be_putty.c` (the program's list of backends). `rowimp`, `rodlg`, `romenu` and the clipboard protocol are adapted from riscos-vncclient
 (same author).
 
 The icon bar menu follows the usual RISC OS pattern: Info (first), Help..., the application's entries (New
-session..., Sessions >), Quit. **Info** opens the standard "About this program" window. It is not a
+session..., Local terminal, File transfer..., Sessions >, Keys..., Key generator...), Quit. **Info** opens the standard "About this program" window. It is not a
 message box: it is a window made by `rodlg.c` in its `DLG_MENU` style (a title bar and nothing else) and used
 directly as the submenu of the Info item (`menu_set_window`: the item's submenu pointer is the window handle,
 which the Wimp opens beside the item and closes with the menu). The layout was measured from the ROM's !Edit
 and !Paint (Toolbox ProgInfo) in the emulator: a 320 pixel wide window, labels 76 wide and right-aligned, sunken
 read-only fields (`DI_DISPLAY`, validation `R2`) 26 high and 30 apart; the title is "About this program" and the
 rows are Name, Purpose, Author, Port, Licence and Version ("0.04 (01-Oct-26), PuTTY 0.85", the date from
-`RO_PORT_DATE` in `roversion.h`). The terminal's window menu has the same Info item at its foot. **Sessions**
+`RO_PORT_DATE` in `roversion.h`). The terminal's window menu does not repeat Info (the Style Guide keeps it on the icon bar menu). **Sessions**
 lists the saved sessions each time the menu is opened (so one saved a moment ago is there) and starts the
 chosen one at once, or opens the Connect box with it loaded if it has no host name. **Help...** runs
 `Filer_Run <PuTTY$Dir>.!Help` (with the real path, so the editor's title shows it). A window's size in rows and
@@ -413,6 +414,19 @@ code of ours: the window has no "scroll request" flag, so the Wimp scrolls it it
 an ordinary open request (`roconfig_event_open` passes it on). Anything that works out a screen position from a work
 area one must include the scroll offsets (`open_popup` does). Other windows are 1320x816 (PuTTYgen) or smaller.
 
+**Changing the mode while the program runs (0.11).** The windows keep their sizes in OS units (the Wimp reopens them
+where they were, in the same OS units, so after a switch from 90 to 180 dpi a window sits twice as far from the screen
+edges in pixels and is twice as big), but a terminal's font is a Font Manager handle, and the Font Manager works a
+font's size in pixels out from the mode when the font is *found* and does not redo it when the mode changes. A terminal
+window open across a switch from 90 to 180 dpi drew its letters half the size they should be inside cells that were
+still the right size (the text spread out like "e c h o"), and across a switch the other way twice the size, on top of
+each other: what a user saw as "all the text is too big and squashed". `Message_ModeChange` now calls
+`roterm_mode_changed` (`rowindow.c`), which loses each window's font and finds it again (in that order: found first,
+`Font_FindFont` would return the same handle and the same stale size), then resizes the window if the cell size came
+out different and redraws. Only the terminal uses fonts; the dialogues' text is the Wimp's own, which it redoes itself.
+It was found by switching with `WimpMode` while a terminal was open (the earlier tests all opened their windows in the
+mode they ran in) and checked with screen dumps in both directions.
+
 **Testing in a 1 OS unit per pixel mode.** `WimpMode X1600 Y1200 C16M EX0 EY0` makes one (C32K is "unsuitable for
 displaying the desktop"). RPCEmu's mouse hack turns the VNC pointer position into RISC OS coordinates as if the mode
 had two OS units to the pixel whatever the mode is, so there the desktop sees the pointer at twice the distance
@@ -423,6 +437,107 @@ of `tools/vncdrive.py` sends the position that makes the desktop's pointer land 
 measured up from the bottom halved), so scripts can use the pixel positions of the screenshot. After `WimpMode` the
 windows of programs already running keep their sizes in OS units, so for the size of a window made in the new mode,
 restart the program (or the emulator: the mode is lost then, set it again before starting PuTTY).
+
+**The RISC OS Style Guide's dialogue conventions (0.11, after issue #1 on GitHub).** Measured from the Style Guide's
+own templates (the window layouts in the Style Guide application's Templates file, read with a small parser): a group
+box is a border `R4` (etched; `R2` is the sunken look of a field) with its title in a separate filled icon straddling the
+top edge; an action button is `R5,3` and the default one `R6,3`; the action buttons sit at the bottom right with Cancel on
+the left and the default action on its right, about 20 OS units apart and flush with the right edge of the boxes above;
+and applying settings is "Set", not "Apply". The configuration dialogue takes its buttons from upstream's `config.c`,
+which lays them out the Windows way (Open and Cancel a fifth of the way in from each side) and calls the mid-session
+button "Apply", so `place_footer_buttons` and `new_widget` (`roconfig.c`) put them right and rename it. The window menu
+of a terminal no longer repeats Info (it stays on the icon bar menu).
+
+## The local terminal (`rolocal.c`)
+
+A session type for programs that need an xterm and the RISC OS command line: a PuTTY terminal window whose "connection" is
+a task window of the TaskWindow module. It is a `Backend` like Telnet or Raw (`local_backend`, id "local", protocol
+`PROT_LOCAL` = 7, which PuTTY does not use), so Duplicate session, Restart session, Change settings, saved sessions, logging
+and the Sessions menu work for it without change. Upstream's `be_list.c` has no way to add a backend, so the program's list
+is `src/ro/be_putty.c`, which is that file for the PuTTY program (ssh, telnet, rlogin, supdup, raw, sshconn) plus this one.
+`conf_launchable` is overridden in `rolocal.c` (a local session has no host name, and upstream's says such a session cannot
+be started); the linker takes ours first and leaves the library's for the other programs. `putty -local` works because
+`cmdline.c` matches `-<id>` for every backend; the "host" argument is taken as the command.
+
+**The protocol** (PRM volume 3, "TaskWindow"; DeskLib's `TaskWindow` library implements the parent side, and
+`tests/ro/twprobe.c` is a script-driven parent that logs every message, which is how the details below were found rather than
+guessed). PuTTY starts `TaskWindow ["command" -quit] -ctrl -display -task &<our handle> -txt &<id> -name PuTTY -wimpslot nK`
+with `Wimp_StartTask`, which returns the task's handle. With no command the task shows the supervisor prompt, the single
+character `*` (it comes as an Output message at once: `-display`), and runs until told to quit; with a command it runs it and,
+with `-quit`, finishes (without `-quit` a prompt follows the command). The messages: Input (&808C0, parent to task: word 5 is
+the number of **bytes**, the bytes follow from word 6, at most 232 a message; DeskLib's `SendInput` puts 24 more than that in
+the count of a short message, which is not what the module wants), Output (&808C1, task to parent, the same layout, and the
+parent must acknowledge each by sending it back as event 19 with `your_ref` set to its `my_ref`, or the task waits), Ego
+(&808C2: the `-txt` number; the sender is the task), Morio (&808C3: the task has finished, however it ended: `ShellCLI_TaskQuit`
+typed at the prompt, `-quit`, or being killed) and Morite (&808C4: parent to task, kill). All three the task sends must be in
+the list given to `Wimp_Initialise` (the Wimp only delivers the messages named there). What a task writes comes through as
+written (with `-ctrl`), VDU codes and all. The Escape character in an Input message is the Escape key: the module raises an
+escape condition, which interrupts a running program and **throws away what was still waiting to be read** (a test that sent
+a program's name and the keys for it in one message lost the name); a program that has turned the terminal raw (UnixLib's
+termios, `tests/ro/xtest.c`) does not get an escape condition, but reads ESC as an ordinary byte, so cursor key sequences and
+everything else arrive exactly as PuTTY's terminal sent them. 13 messages of input sent back to back (3000 bytes,
+`tests/ro/inecho.c`) arrived without loss; 15 KB of output in 232 byte messages came through in order.
+
+**Input flow control.** The module's input buffer is small: 3000 bytes in 13 back-to-back Input messages arrived short by a
+few bytes, 6000 by about 90, and 500 typed at a program that was not yet reading lost the end. So `rolocal.c` queues what is
+typed. A few bytes with nothing in front of them go as Input messages; anything more goes by the Wimp data transfer protocol,
+which the module answers (`twprobe`'s `ds`): Message_DataSave, its Message_RAMFetch for a 1040 byte buffer, Wimp_TransferBlock,
+Message_RAMTransmit. It takes ONE block per DataSave and does not ask again after a full one, but it does not answer the next
+DataSave until the program has used the block up: that is the flow control. The two routes do not keep their order (Input
+messages sent while a block was waiting overtook it), so after every block another DataSave goes out at once, empty-handed if
+need be; its answer says the block is used, and until then typing is queued for it. A module that never answers the first
+DataSave gets paced Input messages instead (`PuTTY$LocalNoRAM` forces that, for tests). A lone Escape jumps the queue and
+empties it. `tests/ro/inecho.c` (with a number of seconds it sleeps before reading) and `tools/localtest.py` check it: 500 to
+8000 bytes, to a reader that sleeps and to one that does not, all arrive exactly.
+
+**Screen codes.** The prompt, BASIC and plain RISC OS programs write VDU codes: Delete is 127 (a line editor echoes it for
+Backspace; an xterm ignores it, so a deleted character stayed on screen), CLS is 12, `COLOUR n` is 17,n, `TAB(x,y)` is
+31,x,y, MODE is 22,n. `filter_output` turns the useful ones into ANSI (127 into BS SP BS, 12 and 22 into clear and home, 30 home,
+11 up, 17 into the colour change, 20 into the default colours, 31 into cursor addressing; BBC colours 0-7 are ANSI's in the same
+order) and drops the others with their parameter bytes (printer, graphics, palette, windows); parameters are consumed by count,
+across Output messages. Escape sequences, Tab, Return, Backspace and the bell pass through, and so do 14 and 15 (shift out and
+in, which a vt100 terminal uses for line drawing; RISC OS only means paged mode by them). Tab (9) is not "cursor right" and FF
+(12) is not a line feed, for the same reason: the Unix programs this is for use them as ANSI does.
+
+**The environment.** UnixLib builds a program's environment, at its start, from the system variables called `UnixEnv$NAME` and
+those with no `$` in the name, and its `TIOCGWINSZ` in a task window answers from `LINES` and `COLUMNS` (outside a task it
+reads the VDU variables, which would give the size of the desktop's text window: nothing like the PuTTY window). So the
+backend sets `UnixEnv$TERM` (the session's terminal type), `UnixEnv$COLUMNS` and `UnixEnv$LINES` when the first local terminal
+starts (from the Conf's window size) and on every resize, remembers what they were, and puts them back when the last one
+goes. A program already running never hears of a resize (there is no SIGWINCH to send); one started afterwards does. (An
+early note here said `Unix$TERM`; that is not a name UnixLib looks at.)
+
+**Settings and details.** The command to run is the Conf's `CONF_remote_cmd` (the SSH panel's "Remote command", unused by a
+session of this kind), with a Connection > Local panel (`add_local_panel`, `roconfig.c`). It is `STR_AMBI`: `conf_get_str` on it is
+an assertion failure, which here is a modal error box that stops the whole desktop (see below). The task window's memory is
+4096K, or `PuTTY$LocalSlot`, and never more than the free memory leaves (`Wimp_SlotSize` with -1, -1 reads it). A new local
+terminal from the icon bar or the command line takes Latin-1 for the received text unless the Default Settings say otherwise
+(RISC OS programs write the RISC OS alphabet). Special command has Interrupt (an Escape character) and Quit task window
+(Morite). The exit code is always 0 (the module does not say how the task ended). The terminal being behind (`seat_output`
+returning more than 4096 bytes) holds back the acknowledgement of an Output message until `unthrottle` says it has caught up.
+For tests: `PuTTY$LocalType` is typed into a new local terminal as it starts (or the contents of the file named after an `@`;
+`\r \n \e \t \xHH \\`, and `\p` waits 1.5 seconds), and `PuTTYlocal$Trace` names a file that gets a line for the start, the
+memory figures and every message from the module. `tests/ro/xtest.c` and `inecho.c` need UnixLib, so they are built `-static` and
+turned into AIF images with `elf2aif` (a UnixLib program linked the default way is a dynamically linked ELF that RISC OS
+cannot run; it died with "undefined instruction" at the first word of its data).
+
+**Quitting.** Closing a local terminal window (after "Close session?") and quitting PuTTY both end the task window: the
+backend sends Morite from `local_free`, and `cleanup_exit` calls `rolocal_shutdown` for the ones still open (and puts the
+`UnixEnv$` variables back). Checked by starting two local terminals, listing the tasks (`tests/ro/tasks.c`: the program
+shows as "PuTTY", each task window as "PuTTY local", 4 MB each), sending PuTTY Message_Quit with `wimprun`'s `quit`
+command (its task handle is in `PuTTYlocal$Trace` as `-task`) and listing again: all three tasks were gone and
+`Show UnixEnv$*` printed nothing.
+
+**Tests.** `tools/localtest.py` (setup, run `wimprun` on the script it writes, check) is the regression test: five cases
+(prompt, BASIC, xtest, inecho, a command) that type into a local terminal by themselves and compare PuTTY's own session log
+with what a terminal ought to have been sent. An Obey file cannot drive it (`WimpTask` lines in one wait until it ends, so
+every session sees the last value of `PuTTY$LocalType`), hence `tests/ro/wimprun.c`, a desktop task with waits.
+`--settings`, `--settings-mid` and `--panel Path` on the command line open the Settings dialogue (as for a new session or
+as Change settings, on a given panel) without a mouse, so that a screen dump can show it.
+
+Not done: the cursor keys at the `*` prompt (it wants RISC OS key codes, a program wants escape sequences, and there is no way to
+tell which is reading), per-window `TERM`/size (the variables are global), the exit status, and answering
+`Message_TaskWindowNewTask` so that other programs' task windows could open here.
 
 ## Things that went wrong, and why
 
@@ -444,6 +559,30 @@ restart the program (or the emulator: the mode is lost then, set it again before
   size. The fix is a constant, `UI_PX` (see "Screen modes: design pixels"). It went unnoticed because every test ran
   in one mode: the emulator's default 1600x1200 at 2 OS units to the pixel.
 
+- **The terminal's text in the wrong size after a screen mode change (0.01 to 0.10, found from a user's report).** See
+  "Changing the mode while the program runs".
+- **The local terminal "hung" the desktop at its first start (0.11 development).** `conf_get_str(conf, CONF_remote_cmd)`:
+  `remote_cmd` is `STR_AMBI`, so the call asserts, `modalfatalbox` shows the Wimp's error box, and the headless emulator
+  has no one to click it - as the same mistake with `CONF_username` did before. It looked like a deadlock: the host command
+  channel timed out, the emulator used little CPU, and the registers (`riscos_debug_registers`) showed the desktop's error box
+  loop (`OS_Byte 129` calls and screen coordinates of a box 740 units wide in R6 to R9). What found it: `ro_trace` lines
+  along the start-up path (the last line written was the one before the failing call), then a breakpoint at the function from
+  the link map (`-Wl,-Map`; a static function is not in the map, but its offset in the object file added to the object's
+  `.text` address is) and breakpoints after each call inside it, which showed that the CPU never came back from
+  `conf_get_str`. Reading `conf.h` for the key's type took a minute.
+- **A second command line for a running copy was misread (0.09, 0.10; found while testing the local terminal).** Starting
+  `!PuTTY` again with a host name hands the command line to the copy that is running (see "One copy at a time"), which
+  parsed it with the same `cmdline.c` it had already used once - and that file keeps state in static variables for the life
+  of the process: the flag that says a host name has been seen (so the second command line's host name was taken for a
+  *port*, nothing was started and the usage box came up), the flag for a loaded session, and the arguments saved for later
+  (which point into the argument list that was freed after the first line, and are never run if the line was refused).
+  `cmdline_reset()` (`patches/cmdline.patch`, compiled from a patched copy in `build/gen` and linked ahead of the library's
+  `cmdline.o`, which the linker then leaves out; plink and the others keep the library's) clears them, and
+  `start_from_command_line` calls it first. The `-pw` password is deliberately not cleared: it belongs to a session that
+  may still be logging in. It also exposed that **the `-pw` password was offered to every session the process started
+  afterwards**, including ones made from the Connect box for other hosts (`cmdline_password` is a static, and
+  `cmdline_get_passwd_input` hands it to any session whose state has not tried it yet): now only a session started from the
+  command line (`RoTerm.cmdline_pw`, set from `roterm_cmdline_session` around its `roterm_new`) asks for it; the rest prompt.
 - The first GUI run "hung": the app had crashed in `Wimp_CreateIcon` (a validation pointer of -1 on an
   iconbar text icon makes the Wimp fault), and the Wimp's error box waits for a click that a headless
   emulator never gets. Describe then Postmortem in that box gives a C backtrace with function names.

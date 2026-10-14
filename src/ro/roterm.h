@@ -39,6 +39,8 @@ struct RoTerm {
     LogContext *logctx;
     struct unicode_data ucsdata;
     cmdline_get_passwd_input_state cmdline_state;
+    bool cmdline_pw;           /* started from the command line, so it may use the -pw password (no other session may:
+                                  it is the one the command line gave for ITS host, not for every host to come) */
     TermWin termwin;
     Seat seat;
     LogPolicy logpolicy;
@@ -88,6 +90,8 @@ struct RoTerm {
 /* Create a session window for conf (which the new session takes over) and start
  * the connection.  Returns NULL if the window cannot be made. */
 RoTerm *roterm_new(Conf *conf);
+/* Set by the code that starts a session from the command line, around its call of roterm_new. */
+extern bool roterm_cmdline_session;
 /* A window that only paints a test pattern: no terminal, no network. */
 RoTerm *roterm_new_demo(Conf *conf);
 void    roterm_free(RoTerm *t);
@@ -109,8 +113,11 @@ void roterm_lose_caret(RoTerm *t);
 
 /* Called every trip round the main loop: paints changed cells, tracks a drag. */
 void roterm_poll(RoTerm *t);
-/* Redraw every window (palette or mode change). */
+/* Redraw every window (palette change). */
 void roterm_redraw_all(void);
+/* The screen mode changed: find every window's font again (a font's size in pixels belongs to the mode it was
+ * found in) and redraw. */
+void roterm_mode_changed(void);
 
 /* True once the session has ended and the window can go if the user closes it. */
 bool roterm_is_exited(const RoTerm *t);

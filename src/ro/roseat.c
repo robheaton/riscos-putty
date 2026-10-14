@@ -16,6 +16,7 @@
 #include "roterm.h"
 #include "rodialog.h"
 #include "roseat.h"
+#include "rolocal.h"
 
 #define SEAT(seat) RoTerm *t = container_of(seat, RoTerm, seat)
 
@@ -63,8 +64,11 @@ void roterm_start_backend(RoTerm *t)
                          conf_get_bool(t->conf, CONF_tcp_nodelay),
                          conf_get_bool(t->conf, CONF_tcp_keepalives));
     if (error) {
-        seat_connection_fatal(&t->seat, "Unable to open connection to %s:\n%s",
-                              conf_dest(t->conf), error);
+        if (conf_get_int(t->conf, CONF_protocol) == PROT_LOCAL)
+            seat_connection_fatal(&t->seat, "Unable to start the local terminal:\n%s", error);
+        else
+            seat_connection_fatal(&t->seat, "Unable to open connection to %s:\n%s",
+                                  conf_dest(t->conf), error);
         sfree(error);
         t->exited = true;
         return;
@@ -142,8 +146,9 @@ static bool rs_eof(Seat *seat)
 static SeatPromptResult rs_get_userpass_input(Seat *seat, prompts_t *p)
 {
     SEAT(seat);
-    SeatPromptResult spr;
-    spr = cmdline_get_passwd_input(p, &t->cmdline_state, true);
+    SeatPromptResult spr = SPR_INCOMPLETE;
+    if (t->cmdline_pw)                                  /* (the password is the command line's, for its own session) */
+        spr = cmdline_get_passwd_input(p, &t->cmdline_state, true);
     if (spr.kind == SPRK_INCOMPLETE)
         spr = term_get_userpass_input(t->term, p);
     return spr;
