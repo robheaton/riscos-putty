@@ -104,9 +104,10 @@ window is resized (a program that is already running does not hear of it; one st
 them back as they were when the last one closes.  The prompt and BASIC write the screen's own control codes: Delete,
 CLS, COLOUR, TAB(x,y) and cursor movement are turned into escape sequences, so they look right here too.
 
-At the * prompt use Backspace to correct a line.  The cursor keys send escape sequences, which are meant for
-programs: the prompt takes Escape to mean "give up this line".  Escape interrupts a running program, as it does
-everywhere in RISC OS.  Special command has Interrupt (Escape) and Quit task window, and closing the window ends the
+At the * prompt use Backspace to correct a line.  The cursor and function keys send escape sequences, which are
+meant for programs: at the prompt they show up as odd characters ("[A").  The Escape key is a plain character, as
+in an xterm, so that vim and bash can use it; to interrupt a running program use Special command > Interrupt
+(Escape).  Special command also has Quit task window, and closing the window ends the
 task window too.  ShellCLI_TaskQuit typed at the prompt ends it from inside, and the window then closes (Window >
 Behaviour says when it does).  The task window has 4096K of memory unless the system variable PuTTY$LocalSlot (a
 number of kilobytes) says otherwise.  What a program writes is taken to be Latin-1, the RISC OS alphabet:

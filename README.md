@@ -54,8 +54,8 @@ is that program, ending when it does. `TERM`, `COLUMNS` and `LINES` are set for 
 which the Unix ports use, makes the environment from the system variables `UnixEnv$TERM` and so on, and takes the
 size from `COLUMNS` and `LINES`); they follow the window's size for programs started after it is resized. The
 prompt's own screen codes (Delete, CLS, COLOUR, TAB(x,y)) are turned into their escape sequence equivalents, so the
-prompt and BASIC look right too. Escape interrupts a program, as it does anywhere in RISC OS, and Special command
-has Interrupt and Quit task window. The memory of the task window is 4096K unless `PuTTY$LocalSlot` says otherwise.
+prompt and BASIC look right too. The Escape key is a plain character, as in an xterm (the TaskWindow module would otherwise take it, and the cursor and
+function keys that begin with one, for an interrupt); Special command > Interrupt is the real Escape, and it has Quit task window. The memory of the task window is 4096K unless `PuTTY$LocalSlot` says otherwise.
 It is the TaskWindow module's protocol, the one Edit and StrongED use for their task windows (`src/ro/rolocal.c`).
 
 Settings and host keys live in the PuTTY directory of `<Choices$Write>`.

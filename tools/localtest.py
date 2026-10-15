@@ -15,6 +15,8 @@ compare the log with what a terminal should have been sent".  The cases:
     xtest    a UnixLib program (tests/ro/xtest.c): TERM, COLUMNS, LINES and TIOCGWINSZ as it sees them, its escape
              sequences arriving whole, and the bytes it reads for keys, ESC sequences and control characters included
     inecho   3000 bytes typed at a program in raw mode (tests/ro/inecho.c): none may be lost
+    escape   cursor and function key sequences, Ctrl-[ and Alt-keys (all start with an Escape character) typed at a program
+             that has signals on, as bash does: the module would take each for the Escape key and end the program
     command  putty -local "Echo ...": the command is the window and it ends with it
 
     tools/localtest.py setup     write the input files and the script (make tests && tools/deploy.sh first)
@@ -50,6 +52,7 @@ def inputs():
         "in3": b"%b.xtest\\r\\pabc\\x7f\\t\\e[A\\eOP\\x03\\x04q\\r\\pShellCLI_TaskQuit\\r" % GUEST.encode(),
         "in4": b"%b.inecho\\r\\p%bQ\\r\\pShellCLI_TaskQuit\\r" % (GUEST.encode(), big),
         "in5": b"",
+        "in6": b"%b.xtest isig\\r\\pa\\e[Ab\\e[Bc\\e[Cd\\eOPe\\e\\ef\\x1bq\\r\\pShellCLI_TaskQuit\\r" % GUEST.encode(),
     }
 
 
@@ -62,7 +65,7 @@ def write(path, data):
 def setup():
     for name, data in inputs().items():
         write(os.path.join(LT, name), data)
-    for n in range(1, 6):
+    for n in range(1, 7):
         try:
             os.remove(os.path.join(LT, "log%d" % n))
         except FileNotFoundError:
@@ -73,7 +76,10 @@ def setup():
         script += ["set PuTTY$LocalType @%s.lt.in%d" % (GUEST, n),
                    "run Run %s.!PuTTY.!Run -local -sessionlog %s.lt.log%d -logoverwrite" % (GUEST, GUEST, n),
                    "wait 700"]
-    script += ["unset PuTTY$LocalType",
+    script += ["set PuTTY$LocalType @%s.lt.in6" % GUEST,
+               "run Run %s.!PuTTY.!Run -local -sessionlog %s.lt.log6 -logoverwrite" % (GUEST, GUEST),
+               "wait 700",
+               "unset PuTTY$LocalType",
                'run Run %s.!PuTTY.!Run -local -sessionlog %s.lt.log5 -logoverwrite "Echo from a command"'
                % (GUEST, GUEST),
                "wait 300"]
@@ -121,6 +127,11 @@ def check():
             b"inecho: ready",
             b"inecho: count=3000 sum=%d" % big_sum,
             b"[The task window has finished]",
+        ]),
+        ("escape", 6, [                                  # signals on, as bash has them: Escapes are data, no SIGINT
+            b"61 1b 5b 41 62 1b 5b 42 63 1b 5b 43 64 1b 4f 50",
+            b"65 1b 1b 66 1b",
+            b"bye",
         ]),
         ("command", 5, [
             b"from a command",

@@ -21,8 +21,12 @@
  * to quit; with one it runs it and finishes (-quit).  What a program writes comes through as it was written, and
  * what is typed goes in as the characters OS_ReadC would give: a program that has turned the terminal raw (UnixLib's
  * termios does, with the Escape key's own handling off) reads exactly the bytes PuTTY's terminal sends, escape
- * sequences for the cursor keys included, and the prompt's line editor takes what it understands.  The Escape
- * character does what the Escape key does, interrupts the program.
+ * sequences for the cursor keys included, and the prompt's line editor takes what it understands.  But the module
+ * takes an Escape character in an Input message for the Escape key: it raises an escape condition (UnixLib turns that
+ * into SIGINT where signals are on, as in bash's line editor, and a second one ends the program) and throws away what
+ * was waiting.  Cursor and function keys, Ctrl-[ and Alt-keys all start with one, so anything that has an Escape in it
+ * goes by data transfer (below), which does not do that; the Escape key is then a plain character, as in an xterm,
+ * and Special command > Interrupt sends the real thing.
  *
  * Input is handed over as the module can take it.  Its buffer is small - a burst of Input messages (3000 bytes sent back
  * to back, 13 messages) arrives short by a few bytes, 6000 by about 90, and 500 bytes sent to a program that is not
@@ -36,8 +40,7 @@
  * read it overtook it (a test that typed a command to quit after 500 bytes had the command read first).  So after a
  * block another Message_DataSave goes out at once, empty-handed if need be: its answer says the block has been used,
  * and until it comes whatever is typed is queued for it, not sent.  If the module never answers the first (an older
- * one), the queue is given out in Input messages, paced.  A lone Escape character (the Escape key) jumps the queue and
- * empties it: it interrupts.
+ * one), the queue is given out in Input messages, paced (and Escapes then do interrupt).
  *
  * What differs from an xterm is the screen's own control codes: the prompt and BASIC write VDU codes (Delete is 127,
  * CLS is 12, colours are 17, 31 puts the cursor somewhere), and a terminal emulator would show them as nothing or as
@@ -99,6 +102,7 @@ struct Local {
     bool unconsumed;                   /* a block has been given and the program may not have used it up yet */
     unsigned long xfer_started;
     int  xfer_ref;                     /* my_ref of the Message_DataSave, to know it if it bounces */
+    bool outq_esc;                     /* an Escape character is in the queue: it must not go as an Input message */
     bool no_ram;                       /* the task window does not do data transfer: paced Input messages instead */
     bool tick_pending;
 
@@ -205,12 +209,14 @@ static void queue_add(Local *l, const char *buf, size_t len)
     }
     memcpy(l->outq + l->outq_len, buf, len);
     l->outq_len += len;
+    if (memchr(buf, 27, len)) l->outq_esc = true;
 }
 
 static void queue_drop(Local *l, size_t n)
 {
     memmove(l->outq, l->outq + n, l->outq_len - n);
     l->outq_len -= n;
+    if (!l->outq_len) l->outq_esc = false;
 }
 
 /* Up to max bytes of the queue, as Input messages. */
@@ -269,7 +275,7 @@ static void pump(Local *l)
             if (l->outq_len) ensure_tick(l);
         }
     } else if (l->outq_len > 0 || l->unconsumed) {
-        if (!l->unconsumed && l->outq_len <= TW_MAX_DATA) {
+        if (!l->unconsumed && !l->outq_esc && l->outq_len <= TW_MAX_DATA) {
             send_messages(l, l->outq_len);             /* a few bytes and nothing in front of them: just send them */
         } else {
             start_transfer(l);
@@ -326,12 +332,7 @@ static void ram_fetch(Local *l, const wmessage *m)
 static void local_input(Local *l, const char *buf, size_t len)
 {
     if (l->finished || !len) return;
-    if (len == 1 && buf[0] == 27) {                    /* the Escape key interrupts: it does not wait, and what was */
-        l->outq_len = 0;                               /* waiting (a paste, say) is given up */
-        send_to_child(l, MSG_TW_INPUT, buf, 1);
-        return;
-    }
-    if (l->outq_len == 0 && !l->xfer && !l->unconsumed && len <= TW_MAX_DATA) {
+    if (l->outq_len == 0 && !l->xfer && !l->unconsumed && len <= TW_MAX_DATA && (l->no_ram || !memchr(buf, 27, len))) {
         send_to_child(l, MSG_TW_INPUT, buf, len);
         return;
     }
@@ -805,8 +806,11 @@ static const SessionSpecial local_specials[] = {
 static void local_special(Backend *be, SessionSpecialCode code, int arg)
 {
     Local *l = container_of(be, Local, backend);
-    if (code == SS_IP)
-        local_input(l, "\033", 1);
+    if (code == SS_IP) {                               /* the real Escape: it jumps the queue, and empties it */
+        l->outq_len = 0;
+        l->outq_esc = false;
+        send_to_child(l, MSG_TW_INPUT, "\033", 1);
+    }
     else if (code == SS_ABORT)
         kill_child(l);
 }

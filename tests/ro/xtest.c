@@ -12,10 +12,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 
-int main(void)
+static volatile int sigints;
+static void on_int(int sig) { sigints++; }
+
+int main(int argc, char **argv)
 {
     struct winsize ws;
     struct termios o, t;
@@ -36,7 +40,9 @@ int main(void)
     t = o;
     t.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
     t.c_oflag &= ~OPOST;
-    t.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+    t.c_lflag &= ~(ECHO | ECHONL | ICANON | IEXTEN);
+    if (argc < 2) t.c_lflag &= ~ISIG;                   /* "xtest isig": keep signals on, as bash does */
+    else signal(SIGINT, on_int);
     t.c_cflag |= CS8;
     t.c_cc[VMIN] = 1;
     t.c_cc[VTIME] = 0;
@@ -47,7 +53,7 @@ int main(void)
     fflush(stdout);
 
     while ((c = getchar()) != EOF && c != 'q') {
-        printf("%02x ", c);
+        printf("%02x%s ", c, sigints ? "(SIGINT)" : "");
         if (++n % 16 == 0) printf("\r\n");
         fflush(stdout);
     }

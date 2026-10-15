@@ -486,8 +486,7 @@ Message_RAMTransmit. It takes ONE block per DataSave and does not ask again afte
 DataSave until the program has used the block up: that is the flow control. The two routes do not keep their order (Input
 messages sent while a block was waiting overtook it), so after every block another DataSave goes out at once, empty-handed if
 need be; its answer says the block is used, and until then typing is queued for it. A module that never answers the first
-DataSave gets paced Input messages instead (`PuTTY$LocalNoRAM` forces that, for tests). A lone Escape jumps the queue and
-empties it. `tests/ro/inecho.c` (with a number of seconds it sleeps before reading) and `tools/localtest.py` check it: 500 to
+DataSave gets paced Input messages instead (`PuTTY$LocalNoRAM` forces that, for tests). Anything with an Escape in it goes by data transfer, because an Escape in an Input message is the Escape key to the module (an escape condition: SIGINT where UnixLib has signals on, as in bash; the second ends it; unread input is thrown away) - found from a user's report that cursor keys and Ctrl-[ ended bash. Data transfer delivers the byte plainly (`tests/ro/xtest.c isig`, `localtest.py` case 6). Special command > Interrupt sends the real Escape, jumping the queue. `tests/ro/inecho.c` (with a number of seconds it sleeps before reading) and `tools/localtest.py` check it: 500 to
 8000 bytes, to a reader that sleeps and to one that does not, all arrive exactly.
 
 **Screen codes.** The prompt, BASIC and plain RISC OS programs write VDU codes: Delete is 127 (a line editor echoes it for
@@ -536,7 +535,7 @@ every session sees the last value of `PuTTY$LocalType`), hence `tests/ro/wimprun
 as Change settings, on a given panel) without a mouse, so that a screen dump can show it.
 
 Not done: the cursor keys at the `*` prompt (it wants RISC OS key codes, a program wants escape sequences, and there is no way to
-tell which is reading), per-window `TERM`/size (the variables are global), the exit status, and answering
+tell which is reading; they now arrive as harmless junk characters), an Escape key that interrupts the prompt and BASIC, per-window `TERM`/size (the variables are global), the exit status, and answering
 `Message_TaskWindowNewTask` so that other programs' task windows could open here.
 
 ## Things that went wrong, and why
